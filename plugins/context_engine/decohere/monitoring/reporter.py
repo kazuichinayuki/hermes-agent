@@ -52,7 +52,7 @@ class HealthReporter:
     ) -> None:
         """Record which compress branch was taken."""
         self._last_compress = replace(
-            classify_compress(readiness, msg_count),
+            classify_compress(readiness),
             turn_numbers=turn_numbers,
         )
         logger.info(

@@ -19,7 +19,7 @@ def check_persisted_turn(turns: tuple, expected_n: int) -> PersistCheck:
     return PersistCheck(ok=found, turn_n=expected_n, found=found)
 
 
-def classify_compress(readiness: Readiness, msg_count: int) -> CompressSnapshot:
+def classify_compress(readiness: Readiness) -> CompressSnapshot:
     """Classify which compression branch was taken + estimate token count."""
     branch_map = {
         "ready": "spec",
@@ -29,7 +29,7 @@ def classify_compress(readiness: Readiness, msg_count: int) -> CompressSnapshot:
     }
     branch = branch_map.get(readiness.state, "legacy")
     # Rough estimate: ~400 tokens per turn
-    estimated = readiness.turn_count * 400 if hasattr(readiness, 'turn_count') else msg_count * 100
+    estimated = len(readiness.turns) * 400
 
     return CompressSnapshot(
         readiness=readiness.state,
