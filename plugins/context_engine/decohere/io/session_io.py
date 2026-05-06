@@ -1,6 +1,6 @@
 """Session I/O. The ONLY layer that touches files/DB.
 
-Wraps RawMessageStore and TurnLedger. All persistence flows through here.
+Wraps RawMessageStore and LedgerStore. All persistence flows through here.
 No business logic, no formatting, no computation.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..store import RawMessageStore, TurnLedger
+from ..store import RawMessageStore, LedgerStore
 
 
 class SessionIO:
@@ -25,7 +25,7 @@ class SessionIO:
         db_path = session_dir / "decohere.db"
 
         self._raw = RawMessageStore(db_path)
-        self._ledger = TurnLedger(db_path)
+        self._ledger = LedgerStore(db_path)
         self._session_id = session_id
         self._format_version: int = 2  # Always v2 for decohere-managed sessions
 
@@ -48,7 +48,7 @@ class SessionIO:
     # ── Turn specs ────────────────────────────────────────────────────
 
     @property
-    def ledger(self) -> TurnLedger:
+    def ledger(self) -> LedgerStore:
         return self._ledger
 
     def save_turn(self, turn: dict) -> None:
