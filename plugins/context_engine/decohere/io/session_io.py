@@ -1,6 +1,6 @@
 """Session I/O. The ONLY layer that touches files/DB.
 
-Wraps RawMessageStore and TurnSpecStore. All persistence flows through here.
+Wraps RawMessageStore and TurnLedger. All persistence flows through here.
 No business logic, no formatting, no computation.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..store import RawMessageStore, TurnSpecStore
+from ..store import RawMessageStore, TurnLedger
 
 
 class SessionIO:
@@ -25,7 +25,7 @@ class SessionIO:
         db_path = session_dir / "decohere.db"
 
         self._raw = RawMessageStore(db_path)
-        self._specs = TurnSpecStore(db_path)
+        self._ledger = TurnLedger(db_path)
         self._session_id = session_id
         self._format_version: int = 2  # Always v2 for decohere-managed sessions
 
@@ -48,20 +48,20 @@ class SessionIO:
     # ── Turn specs ────────────────────────────────────────────────────
 
     @property
-    def specs(self) -> TurnSpecStore:
-        return self._specs
+    def ledger(self) -> TurnLedger:
+        return self._ledger
 
     def save_turn(self, turn: dict) -> None:
-        self._specs.save_turn(turn)
+        self._ledger.save_turn(turn)
 
     def get_turns(self) -> list[dict]:
-        return self._specs.get_turns()
+        return self._ledger.get_turns()
 
     def get_turn(self, turn_n: int) -> dict | None:
-        return self._specs.get_turn(turn_n)
+        return self._ledger.get_turn(turn_n)
 
     def turn_count(self) -> int:
-        return self._specs.turn_count()
+        return self._ledger.turn_count()
 
     # ── Session metadata ──────────────────────────────────────────────
 
@@ -71,4 +71,4 @@ class SessionIO:
 
     def close(self) -> None:
         self._raw.close()
-        self._specs.close()
+        self._ledger.close()

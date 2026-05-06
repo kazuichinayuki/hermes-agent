@@ -1,6 +1,6 @@
 """Immutable-first message and turn-spec store for decohere.
 
-Every raw message is persisted durably in SQLite. Turn specs are stored
+Every raw message is persisted durably in SQLite. Turn TurnLedger are stored
 as JSON blobs with FTS5 indexing on concepts for cross-session search.
 """
 
@@ -96,10 +96,10 @@ class RawMessageStore:
             self._conn = None
 
 
-class TurnSpecStore:
+class TurnLedger:
     """Turn specification storage per session.
 
-    Stores complete turn specs as JSON blobs. Indexes concepts_and_definitions
+    Stores complete turn TurnLedger as JSON blobs. Indexes concepts_and_definitions
     in FTS5 for cross-turn and cross-session search.
     """
 
@@ -123,7 +123,7 @@ class TurnSpecStore:
 
         with conn:
             conn.execute(
-                """INSERT OR REPLACE INTO turn_specs (turn_n, spec_json, validated)
+                """INSERT OR REPLACE INTO turn_TurnLedger (turn_n, spec_json, validated)
                    VALUES (?, ?, ?)""",
                 (turn_n, spec_json, 1 if turn.get("validated") else 0),
             )
@@ -138,10 +138,10 @@ class TurnSpecStore:
                     )
 
     def get_turns(self) -> list[dict]:
-        """Return all turn specs ordered by turn_n."""
+        """Return all turn TurnLedger ordered by turn_n."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT spec_json FROM turn_specs ORDER BY turn_n"
+            "SELECT spec_json FROM turn_TurnLedger ORDER BY turn_n"
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
 
@@ -149,14 +149,14 @@ class TurnSpecStore:
         """Return a single turn spec by turn number."""
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT spec_json FROM turn_specs WHERE turn_n = ?", (turn_n,)
+            "SELECT spec_json FROM turn_TurnLedger WHERE turn_n = ?", (turn_n,)
         ).fetchone()
         return json.loads(row[0]) if row else None
 
     def turn_count(self) -> int:
         """Return number of stored turns."""
         conn = self._get_conn()
-        row = conn.execute("SELECT COUNT(*) FROM turn_specs").fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM turn_TurnLedger").fetchone()
         return row[0] if row else 0
 
     def search_concepts(self, query: str, limit: int = 10) -> list[dict]:
