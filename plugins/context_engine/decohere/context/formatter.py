@@ -1,0 +1,157 @@
+"""Format turn specs into context blocks. Pure functions only."""
+
+from __future__ import annotations
+
+import os
+
+
+def sanitize_path(path: str) -> str:
+    """Replace home dir with ~. Keep line range intact."""
+    home = os.path.expanduser("~")
+    if home != "/" and path.startswith(home):
+        return "~" + path[len(home):]
+    return path
+
+
+def format_spec_layer(turn: dict) -> str:
+    """Format one turn's L1 Spec fields into a text block."""
+    lines = [f"[Turn {turn.get('n', '?')}]"]
+    lines.append(f"  message_range: {turn.get('message_range', [])}")
+    lines.append(f"  tools: {_fmt_tools(turn.get('tools', []))}")
+    lines.append(f"  files: {_fmt_files(turn.get('files_touched', []))}")
+    lines.append(f"  task: {turn.get('relevant_metadata', {}).get('task', '')}")
+    lines.append(f"  ref_class: {turn.get('relevant_metadata', {}).get('reference_class', '')}")
+    return "\n".join(lines)
+
+
+def format_proc_layer(turn: dict) -> str:
+    """Format one turn's L2 Proc fields into a text block."""
+    lines = [f"[Turn {turn.get('n', '?')}]"]
+
+    # Concepts
+    concepts = turn.get("concepts_and_definitions", []) or []
+    if concepts:
+        lines.append("\nconcepts_and_definitions:")
+        for c in concepts:
+            if isinstance(c, dict):
+                lines.append(f"  • {c.get('term', '')}: {c.get('definition', '')}")
+
+    # Narrative
+    narrative = turn.get("narrative", {}) or {}
+    if narrative.get("summary"):
+        lines.append(f"\nnarrative: {narrative['summary']}")
+
+    # Decisions
+    decisions = turn.get("decisions_and_rationale", []) or []
+    if decisions:
+        lines.append("\ndecisions:")
+        for d in decisions:
+            if isinstance(d, dict):
+                lines.append(f"  • {d.get('decision', '')}")
+                if d.get("rationale"):
+                    lines.append(f"    → {d['rationale']}")
+
+    # Procedures
+    procedures = turn.get("procedures", []) or []
+    if procedures:
+        lines.append("\nprocedures:")
+        for p in procedures:
+            if isinstance(p, dict):
+                lines.append(f"  • {p.get('procedure', '')}")
+
+    # Insights
+    insights = turn.get("insights_and_learnings", []) or []
+    if insights:
+        lines.append("\ninsights:")
+        for i in insights:
+            if isinstance(i, str):
+                lines.append(f"  • {i}")
+
+    # User intent
+    intent = turn.get("user_intent", "")
+    if intent:
+        lines.append(f"\nuser_intent: {intent}")
+
+    # Critical reflection
+    cr = turn.get("critical_reflection", {}) or {}
+    if cr.get("improvement_directions"):
+        lines.append("\n↳ improvements:")
+        for d in cr["improvement_directions"]:
+            lines.append(f"  • {d}")
+
+    return "\n".join(lines)
+
+
+def format_structural_from_raw(messages: list) -> str:
+    """Fallback: mechanically extract structural info from raw messages."""
+    tool_names = set()
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []) or []:
+                fn = tc.get("function", {})
+                tool_names.add(fn.get("name", "?"))
+    tools_str = ", ".join(sorted(tool_names)) if tool_names else "none"
+    return f"[Turn ?]\n  tools: {tools_str}\n  source: raw fallback"
+
+
+def format_raw_compressed(messages: list) -> str:
+    """Fallback: user_msg verbatim + first 3 sentences + tool names."""
+    user_msg = ""
+    for msg in messages:
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                user_msg = content
+                break
+
+    # First 3 sentences
+    import re
+    sentences = re.split(r"(?<=[.!?])\s+", user_msg)
+    compressed = " ".join(sentences[:3])
+
+    # Tool names
+    tool_names = set()
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []) or []:
+                fn = tc.get("function", {})
+                tool_names.add(fn.get("name", "?"))
+
+    parts = [f"[Turn ?]"]
+    if compressed:
+        parts.append(f"  msg: {compressed}")
+    if tool_names:
+        parts.append(f"  tools: {', '.join(sorted(tool_names))}")
+    parts.append("  source: raw compressed fallback")
+    return "\n".join(parts)
+
+
+def format_turn_index(index: dict) -> str:
+    """Format turn index for LLM navigation."""
+    if not index:
+        return "(no turns)"
+
+    lines = ["## Turn Index\n"]
+    for entry in index.get("entries", []):
+        concepts = ", ".join(entry.get("key_concepts", [])[:3])
+        tools = ", ".join(entry.get("tools_used", [])[:3])
+        lines.append(
+            f"[Turn {entry['n']}] {entry['title']}"
+            f"  — {entry['summary_1line']}"
+            f"  — tools: {tools}" if tools else ""
+            f"  — concepts: {concepts}" if concepts else ""
+        )
+    return "\n".join(lines)
+
+
+def _fmt_tools(tools: list) -> str:
+    if not tools:
+        return "none"
+    names = [t.get("name", "?") for t in tools if isinstance(t, dict)]
+    return ", ".join(names)
+
+
+def _fmt_files(files: list) -> str:
+    if not files:
+        return "none"
+    return ", ".join(sanitize_path(f) for f in files)
