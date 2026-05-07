@@ -264,7 +264,7 @@ USER MESSAGE ARRIVES
 │     │                                                     │
 │     ├─ Phase 1: post-turn processing                      │
 │     │   Extract last turn from full message list          │
-│     │   → placeholder → fire async infer_turn_structure()    │
+│     │   → placeholder → fire async post_entry()    │
 │     │                                                     │
 │     └─ Phase 2: context building                          │
 │         ├─ Turn specs ready ──→ 2 messages:               │
@@ -357,7 +357,7 @@ compress() called for Turn N+1, but Turn N's spec still deriving
 **F3 — v2 session, spec derivation failed (timeout or model error)**
 
 ```
-infer_turn_structure() raises exception
+post_entry() raises exception
 → Placeholder stays in LedgerStore (all semantic fields = None)
 → Next turn hits F2 (same fallback path)
 → No retry — if derivation keeps failing, every turn uses raw fallback
@@ -368,7 +368,7 @@ infer_turn_structure() raises exception
 
 ```
 update_from_response() detects short turn
-→ Writes placeholder with derivation_skipped: True
+→ Writes placeholder with entry_skipped: True
 → No async derivation task created
 → compress() skips skipped turns in _build_spec_context()
 → No context injected for these turns — raw messages used directly
@@ -378,7 +378,7 @@ update_from_response() detects short turn
 **F5 — Spec derivation timeout, but async task still running**
 
 ```
-asyncio.wait_for(infer_turn_structure(), timeout=5) raises TimeoutError
+asyncio.wait_for(post_entry(), timeout=5) raises TimeoutError
 → Next turn hits F2 (raw fallback for the missing turn)
 → The async task CONTINUES running in background
 → If it completes before Turn N+2 arrives → Turn N+2 gets clean spec
@@ -429,12 +429,12 @@ The plugin lives in the Hermes repo at `plugins/context_engine/decohere/`. The p
 └── plugins/context_engine/decohere/
     ├── plugin.yaml              # Plugin metadata (name, version, description)
     ├── __init__.py              # 入口层 — 只做委托，零业务逻辑
-    ├── config.py                # 单一真理源：DeriverConfig frozen dataclass
-    ├── types.py                 # 不可变数据类：MechanicalFields, Placeholder, Readiness, DerivationResult, Outcome, SecurityEvent, AuditEntry
+    ├── config.py                # 单一真理源：LedgerConfig frozen dataclass
+    ├── types.py                 # 不可变数据类：MechanicalFields, Placeholder, Readiness, EntryResult, Outcome, SecurityEvent, AuditEntry
     ├── core/                    # 计算层 — 纯函数，零依赖，零副作用
     │   ├── __init__.py
-    │   ├── deriver.py           # infer_turn_structure() → dict — 纯异步计算
-    │   ├── prompt.py            # build_derivation_prompt() → (system, user) — 凭证剥离 + 注入防护
+    │   ├── deriver.py           # post_entry() → dict — 纯异步计算
+    │   ├── prompt.py            # build_entry_prompt() → (system, user) — 凭证剥离 + 注入防护
     │   ├── extractor.py         # 机械提取：tools / files / last_turn / tool_chain_log / args_summary / result_summary
     │   ├── validator.py         # ensure_spec_schema(dict) → dict — 纯校验 + 修复
     │   ├── utils.py             # elapsed_ms(), ensure_entry() — 跨模块复用纯函数
@@ -444,7 +444,7 @@ The plugin lives in the Hermes repo at `plugins/context_engine/decohere/`. The p
     │   ├── builder.py           # build_spec_context / build_fallback_context / build_raw_context / build_indexed_context
     │   ├── formatter.py         # format_spec_layer / format_proc_layer / format_turn_index / format_structural_from_raw / format_raw_compressed / sanitize_path
     │   ├── placeholder.py       # build_placeholder() → dict — 组装占位符
-    │   └── classifier.py        # should_skip_derivation() / check_readiness() — 纯判定
+    │   └── classifier.py        # should_skip_entry() / check_readiness() — 纯判定
     ├── scheduling/              # 调度层 — 异步任务 + per-session 锁。依赖 io/ + core/
     │   ├── __init__.py
     │   ├── task_manager.py      # TaskManager: schedule / cleanup / pending_count。_run() 纯委托
@@ -539,7 +539,7 @@ description: >-
 """All defaults live here once. Nowhere else."""
 
 @dataclass(frozen=True)
-class DeriverConfig:
+class LedgerConfig:
     model: str = "openai/gpt-5.4-mini"
     provider: str = "openrouter"
     temperature: float = 0.1
@@ -548,7 +548,7 @@ class DeriverConfig:
     max_turns: int = 20
 
     @classmethod
-    def from_aux_config(cls, aux: dict) -> "DeriverConfig":
+    def from_aux_config(cls, aux: dict) -> "LedgerConfig":
         ts = aux.get("compression", {}).get("decohere", {})
         return cls(
             model=aux.get("compression", {}).get("model", cls.model),
@@ -577,7 +577,7 @@ class Placeholder:
     turn_n: int
     message_range: tuple  # (start, end)
     mechanical: MechanicalFields
-    derivation_skipped: bool
+    entry_skipped: bool
 
 @dataclass(frozen=True)
 class Readiness:
@@ -587,7 +587,7 @@ class Readiness:
 
 
 @dataclass(frozen=True)
-class DerivationResult:
+class EntryResult:
     """Outcome of async spec derivation. Carries validated turn + timing.
     Used by TaskManager._run to route to metrics/logging/persistence
     without if-else branching."""
@@ -679,7 +679,7 @@ _KEY_ARGS: dict[str, tuple[str, ...]] = {
 ```python
 """Build derivation prompts. Pure functions — no I/O, no side-effects."""
 
-def build_derivation_prompt(
+def build_entry_prompt(
     user_msg: str,
     tool_chain: str,
     assistant_response: str,
@@ -787,9 +787,9 @@ def _migrate_stale_user_intent(relevant_metadata: dict, existing_intent: str) ->
 ```python
 """Spec derivation — pure async computation. No I/O, no logging, no side-effects."""
 
-async def infer_turn_structure(
+async def post_entry(
     messages: list,
-    config: DeriverConfig,
+    config: LedgerConfig,
     credentials: dict | None = None,
 ) -> dict:
     """Derive structured turn specification from raw messages.
@@ -799,7 +799,7 @@ async def infer_turn_structure(
 
     Internal flow:
     1. Extract tool chain log (extractor.tool_chain_log)
-    2. Build derivation prompt (prompt.build_derivation_prompt)
+    2. Build derivation prompt (prompt.build_entry_prompt)
     3. Call auxiliary model with json_schema response_format
     4. Validate + repair output (validator.ensure_spec_schema)
     5. Return new turn dict
@@ -876,7 +876,7 @@ def pick_turns_from_index(index: dict, turn_ns: list[int]) -> list[int]:
 ```python
 """Classification logic. Pure functions — no I/O, no side-effects."""
 
-def should_skip_derivation(messages: list) -> bool:
+def should_skip_entry(messages: list) -> bool:
     """True if turn has ≤3 messages and no tool_calls.
     Pure function — reads messages, returns bool.
     """
@@ -910,7 +910,7 @@ def build_placeholder(
 
     Pure function — returns NEW dict, no mutations, no I/O.
 
-    If skipped: compact placeholder (4 fields + derivation_skipped).
+    If skipped: compact placeholder (4 fields + entry_skipped).
     If not skipped: full placeholder with all semantic fields = None.
     """
     ...
@@ -982,7 +982,7 @@ def build_spec_context(turns: list, max_turns: int) -> list:
     """Build exactly 2 messages: L1 Spec block + L2 Proc block.
 
     Pure function — reads turns, returns NEW message list.
-    Skips derivation_skipped turns. Truncates to max_turns.
+    Skips entry_skipped turns. Truncates to max_turns.
     Returns [] if no valid turns remain.
     """
     ...
@@ -1104,7 +1104,7 @@ class TaskManager:
       Lock already serializes — just change what _run does.
     """
 
-    def __init__(self, config: DeriverConfig):
+    def __init__(self, config: LedgerConfig):
         self._locks: dict[str, asyncio.Lock] = {}
         self._pending: dict[str, int] = {}
         self._config = config
@@ -1126,7 +1126,7 @@ class TaskManager:
             self._pending[session_id] = self._pending.get(session_id, 0) + 1
             metrics.record_attempt(session_id)
 
-            result = await _derive_with_timeout(messages, self._config)
+            result = await _post_with_timeout(messages, self._config)
 
             _persist_if_ok(result, io)
             _record_outcome(result, metrics, session_id)
@@ -1145,31 +1145,31 @@ class TaskManager:
 
 # ── Pure helpers (could live in core/utils.py or scheduling/helpers.py) ──
 
-async def _derive_with_timeout(messages: list, config: DeriverConfig) -> DerivationResult:
+async def _post_with_timeout(messages: list, config: LedgerConfig) -> EntryResult:
     """Derive turn spec with timeout. Returns outcome + validated turn + timing.
     Pure async computation — receives config, returns result. No I/O, no logging.
     """
     t0 = time.monotonic()
     try:
         raw = await asyncio.wait_for(
-            infer_turn_structure(messages, config),
+            post_entry(messages, config),
             timeout=config.timeout,
         )
-        return DerivationResult(Outcome.OK, ensure_spec_schema(raw), elapsed_ms(t0))
+        return EntryResult(Outcome.OK, ensure_spec_schema(raw), elapsed_ms(t0))
     except asyncio.TimeoutError:
-        return DerivationResult(Outcome.TIMEOUT, None, elapsed_ms(t0))
+        return EntryResult(Outcome.TIMEOUT, None, elapsed_ms(t0))
     except Exception:
-        return DerivationResult(Outcome.ERROR, None, elapsed_ms(t0))
+        return EntryResult(Outcome.ERROR, None, elapsed_ms(t0))
 
 
-def _persist_if_ok(result: DerivationResult, io: SessionIO) -> None:
+def _persist_if_ok(result: EntryResult, io: SessionIO) -> None:
     """Save turn to SessionIO only if derivation succeeded. Guard clause."""
     if result.outcome is Outcome.OK and result.turn is not None:
         io.save_turn(result.turn)
 
 
-def _record_outcome(result: DerivationResult, metrics: MetricsCollector, session_id: str) -> None:
-    """Route DerivationResult to the correct metrics method.
+def _record_outcome(result: EntryResult, metrics: MetricsCollector, session_id: str) -> None:
+    """Route EntryResult to the correct metrics method.
     Uses Outcome enum dispatch — add new outcome: add enum member + entry here."""
     dispatch = {
         Outcome.OK: metrics.record_success,
@@ -1179,7 +1179,7 @@ def _record_outcome(result: DerivationResult, metrics: MetricsCollector, session
     dispatch[result.outcome](session_id, result.elapsed_ms)
 
 
-def _log_if_failed(result: DerivationResult, session_id: str, metrics: MetricsCollector) -> None:
+def _log_if_failed(result: EntryResult, session_id: str, metrics: MetricsCollector) -> None:
     """Log warning only on failure. No side-effects on state."""
     if result.outcome is Outcome.TIMEOUT:
         logger.warning("Spec derivation timeout session=%s", session_id)
@@ -1240,7 +1240,7 @@ class Decohere(ContextEngine):
         self._tasks: TaskManager | None = None
         self._metrics: MetricsCollector | None = None
         self._health: HealthReporter | None = None
-        self._cfg: DeriverConfig | None = None
+        self._cfg: LedgerConfig | None = None
 
     # ── Lifecycle ──
 
@@ -1257,7 +1257,7 @@ class Decohere(ContextEngine):
         home = Path(hermes_home).expanduser()
 
         self._session_id = session_id
-        self._cfg = DeriverConfig.from_aux_config(
+        self._cfg = LedgerConfig.from_aux_config(
             self._read_aux_config(home / "config.yaml")
         )
         self._io = SessionIO(home, session_id)
@@ -1307,7 +1307,7 @@ class Decohere(ContextEngine):
 
         # ── Phase 1: post-turn processing ──
         turn_msgs = last_turn_messages(messages)
-        should_skip = should_skip_derivation(turn_msgs)
+        should_skip = should_skip_entry(turn_msgs)
         mechanical = mechanical_fields(turn_msgs)
         msg_range = self._io.compute_range(turn_msgs)
         placeholder = build_placeholder(
@@ -1673,7 +1673,7 @@ SQLITE_BUSY_TIMEOUT_MS = 30_000
       "properties": {
         "n": {"type": "integer", "minimum": 1},
         "message_range": {"type": "array", "items": [{"type": "integer"}, {"type": "integer"}], "minItems": 2, "maxItems": 2},
-        "derivation_skipped": {"type": "boolean", "default": false},
+        "entry_skipped": {"type": "boolean", "default": false},
         "tools": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "args_summary": {"type": "string"}}, "required": ["name", "args_summary"], "additionalProperties": false}},
         "files_touched": {"type": "array", "items": {"type": "string"}},
         "reference_documentation": {"type": "array", "items": {"type": "object", "properties": {"source": {"type": "string"}, "content_summary": {"type": "string"}}, "required": ["source", "content_summary"], "additionalProperties": false}},
@@ -1717,7 +1717,7 @@ SQLITE_BUSY_TIMEOUT_MS = 30_000
 {
   "n": 3,
   "message_range": [14, 27],
-  "derivation_skipped": false,
+  "entry_skipped": false,
   "tools": [
     {"name": "read_file", "args_summary": "path=\"plan.md\""},
     {"name": "patch", "args_summary": "path=\"plan.md\""}
@@ -1795,18 +1795,18 @@ Each step targets a single layer. Within each step: validate → compute → per
 | **S2** | I/O | `io/session_io.py` | `SessionIO` class — thin wrapper over RawMessageStore + LedgerStore. `get_turns()`, `turn_count()`, `is_v2()`, `get_raw_messages()`, `save_turn()`, `compute_range()`. Only module that touches files. | Unit: each method returns correct type. compute_range appends to raw store. |
 | **S3** | Bottom | `plugins/.../core/extractor.py` | Pure functions: `last_turn_messages()`, `tool_calls_from_messages()`, `files_from_messages()`, `mechanical_fields()`, `tool_chain_log()`, `summarise_args()`, `summarise_tool_result()`. Zero I/O. KEY_ARGS as module-level frozen dict. | Unit: feed known messages → verify output tuple. No side-effects. |
 | **S4** | Bottom | `plugins/.../core/validator.py` | `ensure_spec_schema(raw) → dict`. `_flatten_insights()`, `_migrate_stale_user_intent()`. L1_DEFAULTS + L2_DEFAULTS as frozen module-level dicts. Returns NEW dict. | Unit: garbage input → repaired output. Missing fields filled. Object insights flattened. |
-| **S5** | Bottom | `plugins/.../core/prompt.py` | `build_derivation_prompt(user_msg, tool_chain, assistant_response) → (system, user)`. `strip_credentials(text) → text`. `wrap_user_message(text) → text`. All pure — no I/O. | Unit: verify system prompt cached-able (identical across calls). Credentials stripped. Injection guard wraps. |
-| **S6** | Middle | `plugins/.../context/classifier.py` | `should_skip_derivation(messages) → bool`. `check_readiness(turns, turn_count) → Readiness`. Pure functions — no I/O. | Unit: 2-message turn → True. 5-message turn with tool_calls → False. legacy turns=None → Readiness("legacy"). |
+| **S5** | Bottom | `plugins/.../core/prompt.py` | `build_entry_prompt(user_msg, tool_chain, assistant_response) → (system, user)`. `strip_credentials(text) → text`. `wrap_user_message(text) → text`. All pure — no I/O. | Unit: verify system prompt cached-able (identical across calls). Credentials stripped. Injection guard wraps. |
+| **S6** | Middle | `plugins/.../context/classifier.py` | `should_skip_entry(messages) → bool`. `check_readiness(turns, turn_count) → Readiness`. Pure functions — no I/O. | Unit: 2-message turn → True. 5-message turn with tool_calls → False. legacy turns=None → Readiness("legacy"). |
 | **S7** | Middle | `plugins/.../context/placeholder.py` | `build_placeholder(turn_n, message_range, mechanical, skipped) → dict`. Pure function — returns NEW dict, no I/O. | Unit: skipped=True → compact dict. skipped=False → full dict with None fields. |
-| **S8** | Config | `plugins/.../config.py` | `DeriverConfig` frozen dataclass. `from_aux_config(aux) → DeriverConfig`. Single source of all defaults. | Unit: empty aux → defaults. Partial aux → merged. |
+| **S8** | Config | `plugins/.../config.py` | `LedgerConfig` frozen dataclass. `from_aux_config(aux) → LedgerConfig`. Single source of all defaults. | Unit: empty aux → defaults. Partial aux → merged. |
 | **S9** | Types | `plugins/.../types.py` | `MechanicalFields`, `Placeholder`, `Readiness` frozen dataclasses. | Unit: instantiation only — no logic to test. |
 
 ### Phase 2 — Derivation (LLM calls)
 
 | Step | Layer | Files | What | Verify |
 |------|-------|-------|------|--------|
-| **S10** | Bottom | `plugins/.../core/deriver.py` | `infer_turn_structure(messages, config: DeriverConfig, credentials) → dict`. Pure async computation — receives everything via args, returns new dict. Internal: extractor → prompt → API call → validator. | Integration: real turn from session → valid JSON Schema output. Turn 6 prompt ~800 tokens (not ~10,400). |
-| **S11** | Test | `tests/gateway/test_decohere.py` | `test_smoke` — real turn + mocked model → valid spec. `test_no_tools` — text-only → empty tools/files. `test_parse_failure` — garbage output → graceful fallback. `test_skip_short` — 2-message → derivation_skipped. `test_tool_chain_log` — Turn 6 → 15+ steps, no raw HTML. `test_validator_repair` — damaged dict → repaired. `test_prompt_credentials_stripped` — sk-* removed. `test_prompt_injection_guard` — embedded instructions wrapped. | All pass. |
+| **S10** | Bottom | `plugins/.../core/deriver.py` | `post_entry(messages, config: LedgerConfig, credentials) → dict`. Pure async computation — receives everything via args, returns new dict. Internal: extractor → prompt → API call → validator. | Integration: real turn from session → valid JSON Schema output. Turn 6 prompt ~800 tokens (not ~10,400). |
+| **S11** | Test | `tests/gateway/test_decohere.py` | `test_smoke` — real turn + mocked model → valid spec. `test_no_tools` — text-only → empty tools/files. `test_parse_failure` — garbage output → graceful fallback. `test_skip_short` — 2-message → entry_skipped. `test_tool_chain_log` — Turn 6 → 15+ steps, no raw HTML. `test_validator_repair` — damaged dict → repaired. `test_prompt_credentials_stripped` — sk-* removed. `test_prompt_injection_guard` — embedded instructions wrapped. | All pass. |
 
 ### Phase 3 — Assembly + formatting
 
@@ -1820,14 +1820,14 @@ Each step targets a single layer. Within each step: validate → compute → per
 | Step | Layer | Files | What | Verify |
 |------|-------|-------|------|--------|
 | **S14** | Scheduling | `plugins/.../scheduling/metrics.py` | `MetricsCollector` — record_attempt / record_success / record_failure / record_timeout / failure_rate / snapshot. In-memory, per-session. | Unit: 3 attempts, 1 fail → failure_rate "1/3". |
-| **S15** | Scheduling | `plugins/.../scheduling/task_manager.py` | `TaskManager` — schedule(sid, msgs, io, metrics). Per-session asyncio.Lock. Serial queue. Timeout from DeriverConfig. cleanup(). | Integration: 2 concurrent schedules for same session → serial (lock). Different sessions → parallel. Timeout → metrics.record_timeout. |
+| **S15** | Scheduling | `plugins/.../scheduling/task_manager.py` | `TaskManager` — schedule(sid, msgs, io, metrics). Per-session asyncio.Lock. Serial queue. Timeout from LedgerConfig. cleanup(). | Integration: 2 concurrent schedules for same session → serial (lock). Different sessions → parallel. Timeout → metrics.record_timeout. |
 | **S16** | Entry | `plugins/.../__init__.py` | `Decohere(ContextEngine)` — thin coordinator. Every method ≤5 lines of delegation. Zero business logic. on_session_start / on_session_end / update_from_response / should_compress / compress. | Integration: create v2 session, send message → placeholder written. Legacy session → should_compress=False. 5-turn session → compress returns 2 messages. |
 
 ### Phase 5 — Integration & monitoring
 
 | Step | Layer | Files | What | Verify |
 |------|-------|-------|------|--------|
-| **S17** | Config | `config.yaml` | Add `context.engine: "decohere"` (default "compressor"). Add `compression.decohere` section — timeout, max_turns, max_tokens, temperature. Plugin reads via DeriverConfig.from_aux_config. | Config validation: missing keys → defaults applied. |
+| **S17** | Config | `config.yaml` | Add `context.engine: "decohere"` (default "compressor"). Add `compression.decohere` section — timeout, max_turns, max_tokens, temperature. Plugin reads via LedgerConfig.from_aux_config. | Config validation: missing keys → defaults applied. |
 | **S18** | Test | `tests/gateway/test_context_engine_plugin.py` | Integration tests: v2 roundtrip, legacy coexistence, fallback pending, fallback failed, max_turns truncation, short turn skipped. | All pass. |
 | **S19** | Monitoring | gateway debug endpoint | Expose `MetricsCollector.snapshot()` via `/spec-metrics` or `hermes status --specs`. | Manual: 10 turns, check metrics. |
 | **S20** | Security | `core/prompt.py` | Credential stripping active. Injection guard active. Session directory chmod 700. | Manual: verify sk-* absent from derivation prompt. |
@@ -1929,7 +1929,7 @@ git switch -c feat/decohere
 ├── plugins/context_engine/decohere/             # ← all new, zero upstream overlap
 │   ├── plugin.yaml
 │   ├── __init__.py         # Decohere(ContextEngine) — thin coordinator
-│   ├── config.py           # DeriverConfig — single source of defaults
+│   ├── config.py           # LedgerConfig — single source of defaults
 │   ├── types.py            # Frozen dataclasses
 │   ├── core/         (6 modules: extractor, prompt, validator, deriver, utils, indexer)
 │   ├── context/      (4 modules: builder, formatter, placeholder, classifier)
@@ -2115,7 +2115,7 @@ LLM sees `~/.hermes/config.yaml:164` — usable for cross-turn file association,
 
 ### GAP: User messages sent to third-party spec deriver
 
-`infer_turn_structure()` sends raw user messages + tool call arguments to OpenRouter. If a Discord user pastes an API key, or tool calls contain credentials in arguments, these leak to the spec derivation model provider.
+`post_entry()` sends raw user messages + tool call arguments to OpenRouter. If a Discord user pastes an API key, or tool calls contain credentials in arguments, these leak to the spec derivation model provider.
 
 **Risk level: Medium.** Mitigation: strip known credential patterns (Bearer tokens, API keys matching `sk-*`, `*_API_KEY=*`) from user_msg before sending to spec deriver.
 
@@ -2192,7 +2192,7 @@ The spec deriver calls `auxiliary.compression` model — this is an auxiliary op
 1. **Small model timeout**: 5s. On timeout: async task continues in background. Next turn uses raw message fallback block if spec not ready. See Fallback Strategy.
 2. **Turn boundary detection**: One `user` message + all subsequent `assistant`/`tool` messages until next `user`. Standard.
 3. **Existing raw messages in session**: **Keep in raw message store.** Raw messages are ground truth. Specs are derived. Stored in separate indexed store (`raw.jsonl` per session), never injected into context window.
-4. **Config keys**: `compression.decohere.timeout` (default 5) + `compression.decohere.max_turns` (default 20) + `compression.decohere.max_tokens` (default 1000) + `compression.decohere.temperature` (default 0.1). All read via `DeriverConfig.from_aux_config()`. The toggle is `context.engine: "decohere"` (no `enabled` sub-key). Token budget overflow handled by existing compression pipeline.
+4. **Config keys**: `compression.decohere.timeout` (default 5) + `compression.decohere.max_turns` (default 20) + `compression.decohere.max_tokens` (default 1000) + `compression.decohere.temperature` (default 0.1). All read via `LedgerConfig.from_aux_config()`. The toggle is `context.engine: "decohere"` (no `enabled` sub-key). Token budget overflow handled by existing compression pipeline.
 5. **First turn in session**: No prior turn spec to inject as context. The turn itself still has its spec derived after completion (for Turn 2's context).
 6. **`concepts_and_definitions` as retrieval anchors**: Can be full-text indexed alongside `insights_and_learnings` for `session_search`. Term + definition pairs are natural retrieval targets.
 
@@ -2210,7 +2210,7 @@ Resolved in v2:
 ```
 Turn N: user_msg → LLM → response (unchanged)
                       ↓
-            infer_turn_structure() → stored as turns[N]
+            post_entry() → stored as turns[N]
                       ↓
 Turn N+1: turns[0..N] injected as context + user_msg → LLM
 ```
@@ -2252,7 +2252,7 @@ All constraints extracted from this plan. Each constraint maps to its source loc
 | AL09 | 零全局可变状态：模块级常量用 `tuple`/`frozenset`。状态只在实例字段里 |
 | AL10 | 不原位篡改：入参只读，输出是新建对象 |
 | AL11 | 计算函数不调用 print()、input()、logger.*、或任何 I/O。只有 TaskManager._run 和 HealthReporter 做日志 |
-| AL12 | Config 默认值只在 `DeriverConfig` 一处声明。无 `config.get("key", default)` 散落各处 |
+| AL12 | Config 默认值只在 `LedgerConfig` 一处声明。无 `config.get("key", default)` 散落各处 |
 
 ### Session Format (B)
 
@@ -2314,7 +2314,7 @@ All constraints extracted from this plan. Each constraint maps to its source loc
 | ID | Constraint |
 |----|-----------|
 | F01 | Turn N: user_msg → LLM → response (unchanged) |
-| F02 | After Turn N: infer_turn_structure() async → stored as turns[N] |
+| F02 | After Turn N: post_entry() async → stored as turns[N] |
 | F03 | Turn N+1: turns[0..N] injected as context + user_msg → LLM |
 | F04 | Spec derivation async, fire-and-forget — does not gate message delivery |
 | F05 | Structural placeholder written synchronously before async derivation |
@@ -2376,11 +2376,11 @@ All constraints extracted from this plan. Each constraint maps to its source loc
 |----|-----------|
 | L01 | Plugin directory: `plugins/context_engine/decohere/` — 19 modules across 6 layers (entry + core/6 + context/4 + scheduling/2 + monitoring/3 + io/1 + config + types). |
 | L02 | Entry: `__init__.py` — Decohere(ContextEngine), thin coordinator, every method delegates. |
-| L03 | Bottom: `core/deriver.py` — infer_turn_structure(), pure async compute. `core/extractor.py` — pure mechanical extraction. `core/prompt.py` — pure prompt build + security. `core/validator.py` — pure repair. |
+| L03 | Bottom: `core/deriver.py` — post_entry(), pure async compute. `core/extractor.py` — pure mechanical extraction. `core/prompt.py` — pure prompt build + security. `core/validator.py` — pure repair. |
 | L04 | Middle: `context/builder.py` — pure context assembly. `context/formatter.py` — pure formatting. `context/classifier.py` — pure skip/readiness detection. `context/placeholder.py` — pure placeholder assembly. |
 | L05 | I/O: `io/session_io.py` — SessionIO, sole file/DB access layer. |
 | L06 | Scheduling: `scheduling/task_manager.py` — async serial queue. `scheduling/metrics.py` — in-memory metrics. |
-| L07 | Config: `config.py` — DeriverConfig frozen dataclass, single source of defaults. `types.py` — immutable data classes. |
+| L07 | Config: `config.py` — LedgerConfig frozen dataclass, single source of defaults. `types.py` — immutable data classes. |
 | L08 | Store: `db.py` + `store.py` — own SQLite, zero changes to hermes_state.py |
 | L09 | gateway/run.py — NO changes. Plugin hooks into ContextEngine lifecycle. |
 | L10 | agent/context_engine.py — NO changes. Plugin implements the ABC. |
