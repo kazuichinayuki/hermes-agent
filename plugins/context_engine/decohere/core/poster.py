@@ -1,4 +1,4 @@
-"""Ledger entry posting — pure async computation. No I.O, no logging, no side-effects."""
+"""Ledger entry posting — pure async computation. No I/O, no logging, no side-effects."""
 
 from __future__ import annotations
 

@@ -88,6 +88,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     logger.info(
         "decohere: migrating DB from schema %d to %d", current, SCHEMA_VERSION
     )
-    # Future migrations go here:
-    # if current < 2: ...
+    # Schema v1 → v2: rename turn_specs table to ledger_entries
+    if current < 2:
+        _migrate_v1_to_v2(conn)
     set_schema_version(conn, SCHEMA_VERSION)
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Drop old turn_specs table. No data migration needed — v1 was never populated."""
+    conn.execute("DROP TABLE IF EXISTS turn_specs")
+    logger.info("decohere: v1→v2 migration — dropped turn_specs table")
