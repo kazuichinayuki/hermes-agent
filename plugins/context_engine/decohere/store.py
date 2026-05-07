@@ -123,7 +123,7 @@ class LedgerStore:
 
         with conn:
             conn.execute(
-                """INSERT OR REPLACE INTO turn_LedgerStore (turn_n, spec_json, validated)
+                """INSERT OR REPLACE INTO turn_specs (turn_n, spec_json, validated)
                    VALUES (?, ?, ?)""",
                 (turn_n, spec_json, 1 if turn.get("validated") else 0),
             )
@@ -141,7 +141,7 @@ class LedgerStore:
         """Return all turn LedgerStore ordered by turn_n."""
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT spec_json FROM turn_LedgerStore ORDER BY turn_n"
+            "SELECT spec_json FROM turn_specs ORDER BY turn_n"
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
 
@@ -149,14 +149,14 @@ class LedgerStore:
         """Return a single turn spec by turn number."""
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT spec_json FROM turn_LedgerStore WHERE turn_n = ?", (turn_n,)
+            "SELECT spec_json FROM turn_specs WHERE turn_n = ?", (turn_n,)
         ).fetchone()
         return json.loads(row[0]) if row else None
 
     def turn_count(self) -> int:
         """Return number of stored turns."""
         conn = self._get_conn()
-        row = conn.execute("SELECT COUNT(*) FROM turn_LedgerStore").fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM turn_specs").fetchone()
         return row[0] if row else 0
 
     def search_concepts(self, query: str, limit: int = 10) -> list[dict]:
