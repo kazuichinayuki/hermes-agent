@@ -15,7 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -88,13 +88,6 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     logger.info(
         "decohere: migrating DB from schema %d to %d", current, SCHEMA_VERSION
     )
-    # Schema v1 → v2: rename turn_specs table to ledger_entries
-    if current < 2:
-        _migrate_v1_to_v2(conn)
+    # Future migrations go here:
+    # if current < 2: ...
     set_schema_version(conn, SCHEMA_VERSION)
-
-
-def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
-    """Drop old turn_specs table. No data migration needed — v1 was never populated."""
-    conn.execute("DROP TABLE IF EXISTS turn_specs")
-    logger.info("decohere: v1→v2 migration — dropped turn_specs table")
