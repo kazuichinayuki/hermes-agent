@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LedgerConfig:
-    """Immutable derivation configuration.
+    """Immutable posting configuration.
 
     All defaults defined here. No inline defaults anywhere else.
     """

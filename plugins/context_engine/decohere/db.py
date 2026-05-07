@@ -15,7 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -46,10 +46,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_raw_role
             ON raw_messages(role);
 
-        CREATE TABLE IF NOT EXISTS turn_specs (
+        CREATE TABLE IF NOT EXISTS ledger_entries (
             turn_n      INTEGER PRIMARY KEY,
-            spec_json   TEXT NOT NULL,
-            derived_at  REAL NOT NULL DEFAULT (unixepoch('subsec')),
+            entry_json   TEXT NOT NULL,
+            posted_at  REAL NOT NULL DEFAULT (unixepoch('subsec')),
             validated   INTEGER NOT NULL DEFAULT 0
         );
 

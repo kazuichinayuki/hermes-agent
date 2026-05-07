@@ -1,10 +1,10 @@
-"""Derivation metrics. In-memory, reset on engine restart."""
+"""Ledger metrics. In-memory, reset on engine restart."""
 
 from __future__ import annotations
 
 
 class MetricsCollector:
-    """Per-session derivation metrics."""
+    """Per-session posting metrics."""
 
     def __init__(self):
         self.attempted: int = 0

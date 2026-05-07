@@ -1,4 +1,4 @@
-"""Validate and repair derived turn specs. Pure functions only."""
+"""Validate and repair ledger entries. Pure functions only."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ _L2_DEFAULTS: dict[str, object] = {
 }
 
 
-def ensure_spec_schema(raw: dict) -> dict:
-    """Repair a derived turn spec to meet schema guarantees. Returns NEW dict.
+def validate_entry(raw: dict) -> dict:
+    """Repair a ledger entry to meet schema guarantees. Returns NEW dict.
 
     Guarantees: all 9 fields present, insights flat strings,
     critical_reflection sub-fields present, user_intent is string,

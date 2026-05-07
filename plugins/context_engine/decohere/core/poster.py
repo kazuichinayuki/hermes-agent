@@ -1,4 +1,4 @@
-"""Spec derivation — pure async computation. No I/O, no logging, no side-effects."""
+"""Ledger entry posting — pure async computation. No I.O, no logging, no side-effects."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from agent.auxiliary_client import async_call_llm, extract_content_or_reasoning
 from ..config import LedgerConfig
 from .extractor import tool_chain_log
 from .prompt import build_entry_prompt
-from .validator import ensure_spec_schema
+from .validator import validate_entry
 
 
 async def post_entry(
     messages: list,
     config: LedgerConfig,
 ) -> dict:
-    """Derive structured turn specification from raw messages.
+    """Post structured ledger entry from raw messages.
 
     Pure computation — receives everything via arguments, returns new dict.
     Does NOT read config files, write to DB, or log.
@@ -63,4 +63,4 @@ async def post_entry(
     except json.JSONDecodeError:
         raw = {}
 
-    return ensure_spec_schema(raw)
+    return validate_entry(raw)

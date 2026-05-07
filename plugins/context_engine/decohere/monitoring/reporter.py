@@ -67,7 +67,7 @@ class HealthReporter:
     def build_health_response(self) -> dict:
         """Assemble /spec-health response."""
         return {
-            "derivation": self._metrics.snapshot(),
+            "posting": self._metrics.snapshot(),
             "last_compress": (
                 dataclasses.asdict(self._last_compress)
                 if self._last_compress
@@ -85,10 +85,10 @@ class HealthReporter:
         )
 
     def snapshot_session_end(self, session_id: str, pending: int) -> None:
-        """Log session close. Warns if derivations were abandoned."""
+        """Log session close. Warns if entries were abandoned."""
         if pending > 0:
             logger.warning(
-                "Decohere: session=%s ended with %d pending derivations",
+                "Decohere: session=%s ended with %d pending postings",
                 session_id, pending,
             )
         logger.info("Decohere: session=%s ended", session_id)

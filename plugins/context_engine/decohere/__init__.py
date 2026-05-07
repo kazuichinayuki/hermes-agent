@@ -2,7 +2,7 @@
 
 Matches the ContextEngine ABC signature exactly.
 Hermes calls compress() before each LLM turn — that's where both
-post-turn derivation AND context building happen.
+posting AND context building happen.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from typing import Any
 from agent.context_engine import ContextEngine
 
 from .config import LedgerConfig
-from .context.builder import build_fallback_context, build_raw_context, build_spec_context
+from .context.builder import build_fallback_context, build_raw_context, build_ledger_context
 from .context.classifier import check_readiness, should_skip_entry
-from .context.formatter import format_spec_layer, format_proc_layer
+from .context.formatter import format_entry_layer, format_proc_layer
 from .context.placeholder import build_placeholder
 from .core.extractor import last_turn_messages, mechanical_fields
 from .io.session_io import SessionIO
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class Decohere(ContextEngine):
-    """Structured turn specifications as context. Thin coordinator.
+    """Structured ledger entries as context. Thin coordinator.
 
     Delegates to:
     - monitoring.*        → health checks, logging
@@ -116,7 +116,7 @@ class Decohere(ContextEngine):
     ) -> list:
         """Main entry point. Called BEFORE each LLM turn.
 
-        Phase 1: extract last turn → placeholder → async derivation
+        Phase 1: extract last turn → placeholder → async posting
         Phase 2: read existing specs → build L1+L2 → return
         """
         sid = self._session_id
@@ -158,7 +158,7 @@ class Decohere(ContextEngine):
             return []
 
         result = (
-            build_spec_context(list(readiness.turns), self._cfg.max_turns)
+            build_ledger_context(list(readiness.turns), self._cfg.max_turns)
             if readiness.state == "ready"
             else build_fallback_context(
                 turns=list(readiness.turns),
@@ -186,7 +186,7 @@ class Decohere(ContextEngine):
                 if self.context_length else 0
             ),
             "compression_count": self.compression_count,
-            "turns_derived": self._io.turn_count() if self._io else 0,
+            "ledger_entries": self._io.turn_count() if self._io else 0,
         }
 
     def update_model(self, model: str, context_length: int,

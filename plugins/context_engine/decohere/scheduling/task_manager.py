@@ -1,4 +1,4 @@
-"""Async derivation scheduler. Per-session serial, cross-session parallel."""
+"""Async posting scheduler. Per-session serial, cross-session parallel."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import time
 from typing import Any
 
 from ..config import LedgerConfig
-from ..core.deriver import post_entry
+from ..core.poster import post_entry
 from ..core.utils import elapsed_ms, ensure_entry
-from ..core.validator import ensure_spec_schema
+from ..core.validator import validate_entry
 from ..io.session_io import SessionIO
 from ..types import EntryResult, Outcome
 from .metrics import MetricsCollector
@@ -33,7 +33,7 @@ class TaskManager:
         io: SessionIO,
         metrics: MetricsCollector,
     ) -> None:
-        """Fire async derivation. Non-blocking."""
+        """Fire async posting. Non-blocking."""
         asyncio.create_task(self._run(session_id, messages, io, metrics))
 
     async def _run(
@@ -72,14 +72,14 @@ async def _post_with_timeout(
     messages: list,
     config: LedgerConfig,
 ) -> EntryResult:
-    """Derive turn spec with timeout."""
+    """Post entry with timeout."""
     t0 = time.monotonic()
     try:
         raw = await asyncio.wait_for(
             post_entry(messages, config),
             timeout=config.timeout,
         )
-        return EntryResult(Outcome.OK, ensure_spec_schema(raw), elapsed_ms(t0))
+        return EntryResult(Outcome.OK, validate_entry(raw), elapsed_ms(t0))
     except asyncio.TimeoutError:
         return EntryResult(Outcome.TIMEOUT, None, elapsed_ms(t0))
     except Exception:
@@ -87,7 +87,7 @@ async def _post_with_timeout(
 
 
 def _persist_if_ok(result: EntryResult, io: SessionIO) -> None:
-    """Save turn only if derivation succeeded."""
+    """Save turn only if posting succeeded."""
     if result.outcome is Outcome.OK and result.turn is not None:
         io.save_turn(result.turn)
 
@@ -109,10 +109,10 @@ def _log_if_failed(
 ) -> None:
     """Log warning only on failure."""
     if result.outcome is Outcome.TIMEOUT:
-        logger.warning("Decohere: spec derivation timeout session=%s", session_id)
+        logger.warning("Decohere: entry posting timeout session=%s", session_id)
     elif result.outcome is Outcome.ERROR:
         logger.warning(
-            "Decohere: spec derivation failed session=%s (rate: %s)",
+            "Decohere: entry posting failed session=%s (rate: %s)",
             session_id,
             metrics.failure_rate(),
         )

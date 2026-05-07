@@ -1,4 +1,4 @@
-"""Format turn specs into context blocks. Pure functions only."""
+"""Format ledger entries into context blocks. Pure functions only."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def sanitize_path(path: str) -> str:
     return path
 
 
-def format_spec_layer(turn: dict) -> str:
+def format_entry_layer(turn: dict) -> str:
     """Format one turn's L1 Spec fields into a text block."""
     lines = [f"[Turn {turn.get('n', '?')}]"]
     lines.append(f"  message_range: {turn.get('message_range', [])}")

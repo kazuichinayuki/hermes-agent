@@ -21,12 +21,12 @@ class MechanicalFields:
     files_touched: tuple = field(default_factory=tuple)
 
 
-# ── Placeholder (pre-derivation) ───────────────────────────────────────
+# ── Placeholder (pre-posting) ───────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class Placeholder:
-    """Written synchronously before async derivation begins."""
+    """Written synchronously before async posting begins."""
 
     turn_n: int
     message_range: tuple
@@ -46,11 +46,11 @@ class Readiness:
     pending_turn_n: int | None
 
 
-# ── Derivation result ──────────────────────────────────────────────────
+# ── Entry result ──────────────────────────────────────────────────
 
 
 class Outcome(Enum):
-    """Derivation outcome states. Single source of truth."""
+    """Posting outcome states. Single source of truth."""
 
     OK = "ok"
     TIMEOUT = "timeout"
@@ -59,7 +59,7 @@ class Outcome(Enum):
 
 @dataclass(frozen=True)
 class EntryResult:
-    """Outcome of async spec derivation.
+    """Outcome of async entry posting.
 
     Carries validated turn + timing. Used by TaskManager._run
     to route to metrics/logging/persistence without if-else branching.
@@ -119,7 +119,7 @@ class SecurityEvent:
 
 @dataclass(frozen=True)
 class AuditEntry:
-    """Per-derivation audit record."""
+    """Per-entry audit record."""
 
     turn_n: int
     model: str

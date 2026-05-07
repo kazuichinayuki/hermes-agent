@@ -1,4 +1,4 @@
-"""Immutable-first message and turn-spec store for decohere.
+"""Immutable-first message and ledger-entry store for decohere.
 
 RawMessageStore and LedgerStore operate over a shared SQLite connection.
 The connection is owned by SessionIO — stores never open their own.
@@ -67,9 +67,9 @@ class RawMessageStore:
 
 
 class LedgerStore:
-    """Turn specification storage per session.
+    """Ledger entry storage per session.
 
-    Stores complete turn specs as JSON blobs. Indexes concepts_and_definitions
+    Stores ledger entries as JSON blobs. Indexes concepts_and_definitions
     in FTS5 for cross-turn and cross-session search.
     """
 
@@ -77,14 +77,14 @@ class LedgerStore:
         self._conn = conn
 
     def save_turn(self, turn: dict) -> None:
-        """Insert or replace a turn spec. Indexes concepts in FTS5."""
+        """Insert or replace a ledger entry. Indexes concepts in FTS5."""
         turn_n = turn["n"]
-        spec_json = json.dumps(turn, ensure_ascii=False)
+        entry_json_blob = json.dumps(turn, ensure_ascii=False)
 
         self._conn.execute(
-            """INSERT OR REPLACE INTO turn_specs (turn_n, spec_json, validated)
+            """INSERT OR REPLACE INTO ledger_entries (turn_n, entry_json, validated)
                VALUES (?, ?, ?)""",
-            (turn_n, spec_json, 1 if turn.get("validated") else 0),
+            (turn_n, entry_json_blob, 1 if turn.get("validated") else 0),
         )
         self._conn.execute("DELETE FROM concepts_fts WHERE rowid = ?", (turn_n,))
         for c in turn.get("concepts_and_definitions", []) or []:
@@ -96,18 +96,18 @@ class LedgerStore:
 
     def get_turns(self) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT spec_json FROM turn_specs ORDER BY turn_n"
+            "SELECT entry_json FROM ledger_entries ORDER BY turn_n"
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
 
     def get_turn(self, turn_n: int) -> dict | None:
         row = self._conn.execute(
-            "SELECT spec_json FROM turn_specs WHERE turn_n = ?", (turn_n,)
+            "SELECT entry_json FROM ledger_entries WHERE turn_n = ?", (turn_n,)
         ).fetchone()
         return json.loads(row[0]) if row else None
 
     def turn_count(self) -> int:
-        row = self._conn.execute("SELECT COUNT(*) FROM turn_specs").fetchone()
+        row = self._conn.execute("SELECT COUNT(*) FROM ledger_entries").fetchone()
         return row[0] if row else 0
 
     def search_concepts(self, query: str, limit: int = 10) -> list[dict]:
