@@ -15,10 +15,10 @@ from ..core.indexer import build_turn_index, pick_turns_from_index
 def build_spec_context(turns: list, max_turns: int) -> list:
     """Build exactly 2 messages: L1 Spec block + L2 Proc block.
 
-    Skips derivation_skipped turns. Truncates to max_turns.
+    Skips entry_skipped turns. Truncates to max_turns.
     Returns [] if no valid turns remain.
     """
-    valid = [t for t in turns if not t.get("derivation_skipped")]
+    valid = [t for t in turns if not t.get("entry_skipped")]
     if not valid:
         return []
 
@@ -52,7 +52,7 @@ def build_fallback_context(
         ]
 
     # Older turns (all except the last placeholder)
-    older = [t for t in turns[:-1] if not t.get("derivation_skipped")]
+    older = [t for t in turns[:-1] if not t.get("entry_skipped")]
     spec_msgs = build_spec_context(older, max_turns)
 
     # Latest turn: raw fallback

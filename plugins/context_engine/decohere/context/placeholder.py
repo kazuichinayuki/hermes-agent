@@ -13,13 +13,13 @@ def build_placeholder(
 ) -> dict:
     """Build a turn placeholder dict. Returns NEW dict, no mutations.
 
-    If skipped: compact placeholder (4 fields + derivation_skipped).
+    If skipped: compact placeholder (4 fields + entry_skipped).
     If not skipped: full placeholder with all semantic fields = None.
     """
     placeholder: dict = {
         "n": turn_n,
         "message_range": list(message_range),
-        "derivation_skipped": skipped,
+        "entry_skipped": skipped,
         "tools": [
             {"name": t["name"], "args_summary": t["args_summary"]}
             for t in mechanical.tools

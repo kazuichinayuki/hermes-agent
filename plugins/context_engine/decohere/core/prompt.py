@@ -43,7 +43,7 @@ _CREDENTIAL_PATTERNS: list[tuple[re.Pattern, str]] = [
 ]
 
 
-def build_derivation_prompt(
+def build_entry_prompt(
     user_msg: str,
     tool_chain: str,
     assistant_response: str,

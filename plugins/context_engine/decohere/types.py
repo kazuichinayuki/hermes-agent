@@ -31,7 +31,7 @@ class Placeholder:
     turn_n: int
     message_range: tuple
     mechanical: MechanicalFields
-    derivation_skipped: bool
+    entry_skipped: bool
 
 
 # ── Readiness check result ─────────────────────────────────────────────
@@ -58,7 +58,7 @@ class Outcome(Enum):
 
 
 @dataclass(frozen=True)
-class DerivationResult:
+class EntryResult:
     """Outcome of async spec derivation.
 
     Carries validated turn + timing. Used by TaskManager._run

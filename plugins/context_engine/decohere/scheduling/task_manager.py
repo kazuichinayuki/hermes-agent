@@ -7,12 +7,12 @@ import logging
 import time
 from typing import Any
 
-from ..config import DeriverConfig
-from ..core.deriver import infer_turn_structure
+from ..config import LedgerConfig
+from ..core.deriver import post_entry
 from ..core.utils import elapsed_ms, ensure_entry
 from ..core.validator import ensure_spec_schema
 from ..io.session_io import SessionIO
-from ..types import DerivationResult, Outcome
+from ..types import EntryResult, Outcome
 from .metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class TaskManager:
     """Serial queue per session (lock-gated). Independent across sessions."""
 
-    def __init__(self, config: DeriverConfig):
+    def __init__(self, config: LedgerConfig):
         self._locks: dict[str, asyncio.Lock] = {}
         self._pending: dict[str, int] = {}
         self._config = config
@@ -49,7 +49,7 @@ class TaskManager:
             self._pending[session_id] = self._pending.get(session_id, 0) + 1
             metrics.record_attempt()
 
-            result = await _derive_with_timeout(messages, self._config)
+            result = await _post_with_timeout(messages, self._config)
 
             _persist_if_ok(result, io)
             _record_outcome(result, metrics)
@@ -68,32 +68,32 @@ class TaskManager:
 # ── Pure helpers ───────────────────────────────────────────────────────
 
 
-async def _derive_with_timeout(
+async def _post_with_timeout(
     messages: list,
-    config: DeriverConfig,
-) -> DerivationResult:
+    config: LedgerConfig,
+) -> EntryResult:
     """Derive turn spec with timeout."""
     t0 = time.monotonic()
     try:
         raw = await asyncio.wait_for(
-            infer_turn_structure(messages, config),
+            post_entry(messages, config),
             timeout=config.timeout,
         )
-        return DerivationResult(Outcome.OK, ensure_spec_schema(raw), elapsed_ms(t0))
+        return EntryResult(Outcome.OK, ensure_spec_schema(raw), elapsed_ms(t0))
     except asyncio.TimeoutError:
-        return DerivationResult(Outcome.TIMEOUT, None, elapsed_ms(t0))
+        return EntryResult(Outcome.TIMEOUT, None, elapsed_ms(t0))
     except Exception:
-        return DerivationResult(Outcome.ERROR, None, elapsed_ms(t0))
+        return EntryResult(Outcome.ERROR, None, elapsed_ms(t0))
 
 
-def _persist_if_ok(result: DerivationResult, io: SessionIO) -> None:
+def _persist_if_ok(result: EntryResult, io: SessionIO) -> None:
     """Save turn only if derivation succeeded."""
     if result.outcome is Outcome.OK and result.turn is not None:
         io.save_turn(result.turn)
 
 
-def _record_outcome(result: DerivationResult, metrics: MetricsCollector) -> None:
-    """Route DerivationResult to the correct metrics method."""
+def _record_outcome(result: EntryResult, metrics: MetricsCollector) -> None:
+    """Route EntryResult to the correct metrics method."""
     dispatch = {
         Outcome.OK: metrics.record_success,
         Outcome.TIMEOUT: metrics.record_timeout,
@@ -103,7 +103,7 @@ def _record_outcome(result: DerivationResult, metrics: MetricsCollector) -> None
 
 
 def _log_if_failed(
-    result: DerivationResult,
+    result: EntryResult,
     session_id: str,
     metrics: MetricsCollector,
 ) -> None:

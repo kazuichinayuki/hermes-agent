@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class DeriverConfig:
+class LedgerConfig:
     """Immutable derivation configuration.
 
     All defaults defined here. No inline defaults anywhere else.
@@ -24,11 +24,11 @@ class DeriverConfig:
     max_turns: int = 20
 
     @classmethod
-    def from_aux_config(cls, aux: dict | None) -> "DeriverConfig":
+    def from_aux_config(cls, aux: dict | None) -> "LedgerConfig":
         """Build config from auxiliary config block.
 
         Reads from ``auxiliary.compression`` in config.yaml.
-        Falls back to DeriverConfig defaults for every missing key.
+        Falls back to LedgerConfig defaults for every missing key.
         """
         if aux is None:
             return cls()

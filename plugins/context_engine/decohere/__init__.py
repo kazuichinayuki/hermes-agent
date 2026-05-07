@@ -13,9 +13,9 @@ from typing import Any
 
 from agent.context_engine import ContextEngine
 
-from .config import DeriverConfig
+from .config import LedgerConfig
 from .context.builder import build_fallback_context, build_raw_context, build_spec_context
-from .context.classifier import check_readiness, should_skip_derivation
+from .context.classifier import check_readiness, should_skip_entry
 from .context.formatter import format_spec_layer, format_proc_layer
 from .context.placeholder import build_placeholder
 from .core.extractor import last_turn_messages, mechanical_fields
@@ -61,7 +61,7 @@ class Decohere(ContextEngine):
         self._tasks: TaskManager | None = None
         self._metrics: MetricsCollector | None = None
         self._health: HealthReporter | None = None
-        self._cfg: DeriverConfig | None = None
+        self._cfg: LedgerConfig | None = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ class Decohere(ContextEngine):
         home = Path(hermes_home).expanduser()
 
         self._session_id = session_id
-        self._cfg = DeriverConfig.from_aux_config(
+        self._cfg = LedgerConfig.from_aux_config(
             self._read_aux_config(home / "config.yaml")
         )
         self._io = SessionIO(home, session_id)
@@ -125,7 +125,7 @@ class Decohere(ContextEngine):
 
         # ── Phase 1: post-turn processing ──
         turn_msgs = last_turn_messages(messages)
-        should_skip = should_skip_derivation(turn_msgs)
+        should_skip = should_skip_entry(turn_msgs)
         mechanical = mechanical_fields(turn_msgs)
         msg_range = self._io.compute_range(turn_msgs)
         placeholder = build_placeholder(

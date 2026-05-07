@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from agent.auxiliary_client import async_call_llm, extract_content_or_reasoning
 
-from ..config import DeriverConfig
+from ..config import LedgerConfig
 from .extractor import tool_chain_log
-from .prompt import build_derivation_prompt
+from .prompt import build_entry_prompt
 from .validator import ensure_spec_schema
 
 
-async def infer_turn_structure(
+async def post_entry(
     messages: list,
-    config: DeriverConfig,
+    config: LedgerConfig,
 ) -> dict:
     """Derive structured turn specification from raw messages.
 
@@ -38,7 +38,7 @@ async def infer_turn_structure(
     chain = tool_chain_log(messages)
 
     # 3. Build prompt
-    system_prompt, user_prompt = build_derivation_prompt(
+    system_prompt, user_prompt = build_entry_prompt(
         user_msg, chain, assistant_response
     )
 

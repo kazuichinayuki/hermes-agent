@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..types import Readiness
 
 
-def should_skip_derivation(messages: list) -> bool:
+def should_skip_entry(messages: list) -> bool:
     """True if turn has ≤3 messages and no tool_calls."""
     if len(messages) <= 3:
         has_tool_calls = any(
