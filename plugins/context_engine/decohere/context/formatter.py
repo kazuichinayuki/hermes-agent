@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 
 def sanitize_path(path: str) -> str:
@@ -13,7 +14,7 @@ def sanitize_path(path: str) -> str:
     return path
 
 
-def format_entry_layer(turn: dict) -> str:
+def format_entry_layer(turn: dict[str, object]) -> str:
     """Format one turn's L1 Spec fields into a text block."""
     lines = [f"[Turn {turn.get('n', '?')}]"]
     lines.append(f"  message_range: {turn.get('message_range', [])}")
@@ -24,7 +25,7 @@ def format_entry_layer(turn: dict) -> str:
     return "\n".join(lines)
 
 
-def format_proc_layer(turn: dict) -> str:
+def format_proc_layer(turn: dict[str, object]) -> str:
     """Format one turn's L2 Proc fields into a text block."""
     lines = [f"[Turn {turn.get('n', '?')}]"]
 
@@ -82,7 +83,7 @@ def format_proc_layer(turn: dict) -> str:
     return "\n".join(lines)
 
 
-def format_structural_from_raw(messages: list) -> str:
+def format_structural_from_raw(messages: list[dict[str, Any]]) -> str:
     """Fallback: mechanically extract structural info from raw messages."""
     tool_names = set()
     for msg in messages:
@@ -94,7 +95,7 @@ def format_structural_from_raw(messages: list) -> str:
     return f"[Turn ?]\n  tools: {tools_str}\n  source: raw fallback"
 
 
-def format_raw_compressed(messages: list) -> str:
+def format_raw_compressed(messages: list[dict[str, Any]]) -> str:
     """Fallback: user_msg verbatim + first 3 sentences + tool names."""
     user_msg = ""
     for msg in messages:
@@ -126,7 +127,7 @@ def format_raw_compressed(messages: list) -> str:
     return "\n".join(parts)
 
 
-def format_turn_index(index: dict) -> str:
+def format_turn_index(index: dict[str, object]) -> str:
     """Format turn index for LLM navigation."""
     if not index:
         return "(no turns)"

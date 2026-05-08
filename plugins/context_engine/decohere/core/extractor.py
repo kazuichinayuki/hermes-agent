@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..types import MechanicalFields
 
 _KEY_ARGS: dict[str, tuple[str, ...]] = {
@@ -17,7 +19,7 @@ _KEY_ARGS: dict[str, tuple[str, ...]] = {
 }
 
 
-def last_turn_messages(messages: list) -> list:
+def last_turn_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Reverse-scan for last user message boundary. Returns NEW list slice."""
     if not messages:
         return []
@@ -27,7 +29,7 @@ def last_turn_messages(messages: list) -> list:
     return list(messages)
 
 
-def tool_calls_from_messages(messages: list) -> tuple:
+def tool_calls_from_messages(messages: list[dict[str, Any]]) -> tuple[dict[str, str], ...]:
     """Parse tool_calls from assistant messages. Returns tuple of {name, args_summary}."""
     import json as _json
 
@@ -44,7 +46,7 @@ def tool_calls_from_messages(messages: list) -> tuple:
     return tuple(results)
 
 
-def files_from_messages(messages: list) -> tuple:
+def files_from_messages(messages: list[dict[str, Any]]) -> tuple[str, ...]:
     """Extract file paths from tool call args. Home dir → ~."""
     import json as _json
     from os.path import expanduser
@@ -69,12 +71,14 @@ def files_from_messages(messages: list) -> tuple:
             path = args.get("path", "") or args.get("file_path", "")
             if path and path not in seen:
                 seen.add(path)
-                sanitized = path.replace(home, "~") if home != "/" else path
+                sanitized = path
+                if home != "/" and path.startswith(home):
+                    sanitized = "~" + path[len(home):]
                 results.append(sanitized)
     return tuple(results)
 
 
-def mechanical_fields(messages: list) -> MechanicalFields:
+def mechanical_fields(messages: list[dict[str, Any]]) -> MechanicalFields:
     """One-shot extraction: tools + files_touched."""
     return MechanicalFields(
         tools=tool_calls_from_messages(messages),
@@ -82,7 +86,7 @@ def mechanical_fields(messages: list) -> MechanicalFields:
     )
 
 
-def tool_chain_log(messages: list) -> str:
+def tool_chain_log(messages: list[dict[str, Any]]) -> str:
     """Build structured tool chain log. ① fn(key_args) → result_summary per call."""
     import json as _json
 
@@ -108,7 +112,7 @@ def tool_chain_log(messages: list) -> str:
     return "\n".join(lines)
 
 
-def summarise_args(fn: str, args_raw) -> str:
+def summarise_args(fn: str, args_raw: str | dict[str, Any]) -> str:
     """Keep key arguments, drop boilerplate."""
     import json as _json
 
@@ -127,8 +131,6 @@ def summarise_args(fn: str, args_raw) -> str:
     for k in key_args:
         if k in args:
             val = args[k]
-            if isinstance(val, str) and len(val) > 80:
-                val = val[:77] + "..."
             parts.append(f"{k}={_json.dumps(val, ensure_ascii=False)}")
     return ", ".join(parts)
 
@@ -147,6 +149,4 @@ def summarise_tool_result(content: str) -> str:
             return f"JSON array[{len(data)}], {n_chars} chars"
         return f"JSON value, {n_chars} chars"
     except (_json.JSONDecodeError, TypeError):
-        if n_chars > 200:
-            return f"text ({n_chars} chars): {content[:100]}..."
-        return f"text ({n_chars} chars): {content}"
+        return f"text ({n_chars} chars)"

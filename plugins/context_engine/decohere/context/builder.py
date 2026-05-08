@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from .formatter import (
     format_proc_layer,
     format_entry_layer,
@@ -12,7 +14,7 @@ from .formatter import (
 from ..core.indexer import build_turn_index, pick_turns_from_index
 
 
-def build_ledger_context(turns: list, max_turns: int) -> list:
+def build_ledger_context(turns: list[dict[str, object]], max_turns: int) -> list[dict[str, Any]]:
     """Build exactly 2 messages: L1 Entry block + L2 Proc block.
 
     Skips entry_skipped turns. Truncates to max_turns.
@@ -37,10 +39,10 @@ def build_ledger_context(turns: list, max_turns: int) -> list:
 
 
 def build_fallback_context(
-    turns: list,
+    turns: list[dict[str, object]],
     max_turns: int,
-    last_turn_msgs: list,
-) -> list:
+    last_turn_msgs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Build context when latest entry not ready.
 
     Older turns: ledger context. Latest turn: raw compressed fallback.
@@ -65,12 +67,12 @@ def build_fallback_context(
     return entry_msgs
 
 
-def build_raw_context(messages: list) -> list:
+def build_raw_context(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Legacy passthrough — return messages unchanged."""
     return messages
 
 
-def build_indexed_context(turns: list, max_turns: int) -> list:
+def build_indexed_context(turns: list[dict[str, object]], max_turns: int) -> list[dict[str, Any]]:
     """Build 3 messages: turn_index + selected L1 Entry + selected L2 Proc.
 
     Threshold: >20 turns → use index. ≤20 → delegate to build_ledger_context.

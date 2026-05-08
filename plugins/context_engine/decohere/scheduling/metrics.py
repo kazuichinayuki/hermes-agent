@@ -42,7 +42,7 @@ class MetricsCollector:
             return 1.0
         return self.succeeded / self.attempted
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, object]:
         return {
             "attempted": self.attempted,
             "succeeded": self.succeeded,

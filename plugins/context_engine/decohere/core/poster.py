@@ -5,15 +5,16 @@ from __future__ import annotations
 from agent.auxiliary_client import async_call_llm, extract_content_or_reasoning
 
 from ..config import LedgerConfig
+from typing import Any
 from .extractor import tool_chain_log
 from .prompt import build_entry_prompt
 from .validator import validate_entry
 
 
 async def post_entry(
-    messages: list,
+    messages: list[dict[str, Any]],
     config: LedgerConfig,
-) -> dict:
+) -> dict[str, object]:
     """Post structured ledger entry from raw messages.
 
     Pure computation — receives everything via arguments, returns new dict.

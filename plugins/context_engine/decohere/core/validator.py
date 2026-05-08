@@ -22,7 +22,7 @@ _L2_DEFAULTS: dict[str, object] = {
 }
 
 
-def validate_entry(raw: dict) -> dict:
+def validate_entry(raw: dict[str, object]) -> dict[str, object]:
     """Repair a ledger entry to meet schema guarantees. Returns NEW dict.
 
     Guarantees: all 9 fields present, insights flat strings,
@@ -95,9 +95,9 @@ def _flatten_insights(raw: object) -> tuple[str, ...]:
 
 
 def _migrate_stale_user_intent(
-    relevant_metadata: dict,
+    relevant_metadata: dict[str, object],
     existing_intent: str,
-) -> tuple[dict, str]:
+) -> tuple[dict[str, object], str]:
     """Move stray user_intent from relevant_metadata to stand-alone field."""
     cleaned = dict(relevant_metadata)
     stray = cleaned.pop("user_intent", None)

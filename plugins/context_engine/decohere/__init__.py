@@ -80,7 +80,7 @@ class Decohere(ContextEngine):
         self._health = HealthReporter(self._io, self._metrics)
         self._health.snapshot_session_start(session_id, kwargs.get("platform", ""))
 
-    def on_session_end(self, session_id: str, messages: list):
+    def on_session_end(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         if self._health and self._tasks:
             self._health.snapshot_session_end(
                 session_id, self._tasks.pending_count(session_id)
@@ -97,7 +97,7 @@ class Decohere(ContextEngine):
 
     # ── Token tracking ─────────────────────────────────────────────────
 
-    def update_from_response(self, usage: dict):
+    def update_from_response(self, usage: dict[str, int]) -> None:
         self.last_prompt_tokens = usage.get("prompt_tokens", 0)
         self.last_completion_tokens = usage.get("completion_tokens", 0)
         self.last_total_tokens = usage.get("total_tokens", 0)
@@ -105,15 +105,17 @@ class Decohere(ContextEngine):
     # ── Context management ─────────────────────────────────────────────
 
     def should_compress(self, prompt_tokens: int = None) -> bool:
-        """Always True — decohere replaces raw history with spec context."""
-        return True
+        """True for v2 sessions, False for legacy."""
+        if self._io is None:
+            return False
+        return self._io.is_v2()
 
     def compress(
         self,
-        messages: list,
+        messages: list[dict[str, Any]],
         current_tokens: int = None,
         focus_topic: str = None,
-    ) -> list:
+    ) -> list[dict[str, Any]]:
         """Main entry point. Called BEFORE each LLM turn.
 
         Phase 1: extract last turn → placeholder → async posting
@@ -176,7 +178,7 @@ class Decohere(ContextEngine):
 
     # ── Status ─────────────────────────────────────────────────────────
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, object]:
         return {
             "last_prompt_tokens": self.last_prompt_tokens,
             "threshold_tokens": self.threshold_tokens,
@@ -208,7 +210,7 @@ class Decohere(ContextEngine):
             return None
 
 
-def _extract_turn_numbers(messages: list) -> list[int]:
+def _extract_turn_numbers(messages: list[dict[str, Any]]) -> list[int]:
     """Extract turn numbers from L1/L2 context messages for audit trail."""
     import re
     numbers = set()

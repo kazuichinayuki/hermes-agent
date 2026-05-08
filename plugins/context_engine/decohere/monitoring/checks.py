@@ -13,7 +13,7 @@ def check_message_range(actual_start: int, expected_start: int) -> RangeCheck:
     return RangeCheck(ok=ok, expected=expected_start, actual=actual_start, delta=delta)
 
 
-def check_persisted_turn(turns: tuple, expected_n: int) -> PersistCheck:
+def check_persisted_turn(turns: tuple[dict[str, object], ...], expected_n: int) -> PersistCheck:
     """Verify placeholder was actually written to store."""
     found = any(t.get("n") == expected_n for t in turns)
     return PersistCheck(ok=found, turn_n=expected_n, found=found)

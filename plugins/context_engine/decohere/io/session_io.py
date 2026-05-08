@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from ..db import configure_connection, ensure_schema, run_migrations
 from ..store import RawMessageStore, LedgerStore
@@ -38,10 +39,10 @@ class SessionIO:
 
     # ── Raw messages ──────────────────────────────────────────────────
 
-    def compute_range(self, messages: list[dict]) -> tuple[int, int]:
+    def compute_range(self, messages: list[dict[str, Any]]) -> tuple[int, int]:
         return self._raw.append(messages)
 
-    def get_raw_messages(self, start: int = 0, end: int | None = None) -> list[dict]:
+    def get_raw_messages(self, start: int = 0, end: int | None = None) -> list[dict[str, Any]]:
         return self._raw.get(start, end)
 
     def raw_count(self) -> int:
@@ -49,13 +50,13 @@ class SessionIO:
 
     # ── Ledger ─────────────────────────────────────────────────────────
 
-    def save_turn(self, turn: dict) -> None:
+    def save_turn(self, turn: dict[str, object]) -> None:
         self._ledger.save_turn(turn)
 
-    def get_turns(self) -> list[dict]:
+    def get_turns(self) -> list[dict[str, object]]:
         return self._ledger.get_turns()
 
-    def get_turn(self, turn_n: int) -> dict | None:
+    def get_turn(self, turn_n: int) -> dict[str, object] | None:
         return self._ledger.get_turn(turn_n)
 
     def turn_count(self) -> int:

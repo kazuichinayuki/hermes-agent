@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class RawMessageStore:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
 
-    def append(self, messages: list[dict]) -> tuple[int, int]:
+    def append(self, messages: list[dict[str, Any]]) -> tuple[int, int]:
         """Append messages. Returns (start_id, end_id) store_id range."""
         start_id = self.count()
         for msg in messages:
@@ -44,7 +44,7 @@ class RawMessageStore:
         row = self._conn.execute("SELECT COUNT(*) FROM raw_messages").fetchone()
         return row[0] if row else 0
 
-    def get(self, start: int = 0, end: int | None = None) -> list[dict]:
+    def get(self, start: int = 0, end: int | None = None) -> list[dict[str, Any]]:
         if end is not None:
             rows = self._conn.execute(
                 "SELECT store_id, role, content, tool_name, tool_call_id, timestamp "
@@ -76,7 +76,7 @@ class LedgerStore:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
 
-    def save_turn(self, turn: dict) -> None:
+    def save_turn(self, turn: dict[str, object]) -> None:
         """Insert or replace a ledger entry. Indexes concepts in FTS5."""
         turn_n = turn["n"]
         entry_json_blob = json.dumps(turn, ensure_ascii=False)
@@ -94,13 +94,13 @@ class LedgerStore:
                     (turn_n, c.get("term", ""), c.get("definition", "")),
                 )
 
-    def get_turns(self) -> list[dict]:
+    def get_turns(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT entry_json FROM ledger_entries ORDER BY turn_n"
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
 
-    def get_turn(self, turn_n: int) -> dict | None:
+    def get_turn(self, turn_n: int) -> dict[str, object] | None:
         row = self._conn.execute(
             "SELECT entry_json FROM ledger_entries WHERE turn_n = ?", (turn_n,)
         ).fetchone()
@@ -110,7 +110,7 @@ class LedgerStore:
         row = self._conn.execute("SELECT COUNT(*) FROM ledger_entries").fetchone()
         return row[0] if row else 0
 
-    def search_concepts(self, query: str, limit: int = 10) -> list[dict]:
+    def search_concepts(self, query: str, limit: int = 10) -> list[dict[str, object]]:
         try:
             rows = self._conn.execute(
                 """SELECT rowid, term, definition

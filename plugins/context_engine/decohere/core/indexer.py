@@ -7,7 +7,7 @@ Build an index first, then let the LLM choose which nodes to expand.
 from __future__ import annotations
 
 
-def build_turn_index(turns: list[dict]) -> dict | None:
+def build_turn_index(turns: list[dict[str, object]]) -> dict[str, object] | None:
     """Build a lightweight turn index for LLM navigation.
 
     For ≤20 turns, returns None (use full spec context).
@@ -45,6 +45,7 @@ def build_turn_index(turns: list[dict]) -> dict | None:
             "summary_1line": summary_1line,
             "tools_used": tools_used,
             "key_concepts": key_concepts,
+            "files_touched": [str(f) for f in (turn.get("files_touched", []) or [])],
         })
 
         # Build concept_map
@@ -62,7 +63,7 @@ def build_turn_index(turns: list[dict]) -> dict | None:
     }
 
 
-def pick_turns_from_index(index: dict, turn_ns: list[int]) -> list[int]:
+def pick_turns_from_index(index: dict[str, object], turn_ns: list[int]) -> list[int]:
     """Resolve concept + file references from selected turns.
 
     If LLM picks turn 3 (key_concepts: ["architecture"]), also include
@@ -83,8 +84,8 @@ def pick_turns_from_index(index: dict, turn_ns: list[int]) -> list[int]:
             for term in entry.get("key_concepts", []):
                 for linked_n in concept_map.get(term, ()):
                     expanded.add(linked_n)
-            # Follow file links
-            for path in entry.get("tools_used", []):
+            # Follow file links via files_touched in index
+            for path in entry.get("files_touched", []):
                 for linked_n in file_map.get(path, ()):
                     expanded.add(linked_n)
 

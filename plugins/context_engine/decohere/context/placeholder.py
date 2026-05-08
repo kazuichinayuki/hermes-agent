@@ -10,7 +10,7 @@ def build_placeholder(
     message_range: tuple[int, int],
     mechanical: MechanicalFields,
     skipped: bool,
-) -> dict:
+) -> dict[str, object]:
     """Build a turn placeholder dict. Returns NEW dict, no mutations.
 
     If skipped: compact placeholder (4 fields + entry_skipped).

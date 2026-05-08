@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from ..types import Readiness
+from typing import Any
 
 
-def should_skip_entry(messages: list) -> bool:
+def should_skip_entry(messages: list[dict[str, Any]]) -> bool:
     """True if turn has ≤3 messages and no tool_calls."""
     if len(messages) <= 3:
         has_tool_calls = any(
@@ -16,7 +17,7 @@ def should_skip_entry(messages: list) -> bool:
     return False
 
 
-def check_readiness(turns: list, turn_count: int) -> Readiness:
+def check_readiness(turns: list[dict[str, object]] | None, turn_count: int) -> Readiness:
     """Determine context readiness state.
 
     States:

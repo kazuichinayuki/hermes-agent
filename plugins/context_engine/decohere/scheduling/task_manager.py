@@ -29,7 +29,7 @@ class TaskManager:
     def schedule(
         self,
         session_id: str,
-        messages: list,
+        messages: list[dict[str, Any]],
         io: SessionIO,
         metrics: MetricsCollector,
     ) -> None:
@@ -39,7 +39,7 @@ class TaskManager:
     async def _run(
         self,
         session_id: str,
-        messages: list,
+        messages: list[dict[str, Any]],
         io: SessionIO,
         metrics: MetricsCollector,
     ) -> None:
@@ -69,7 +69,7 @@ class TaskManager:
 
 
 async def _post_with_timeout(
-    messages: list,
+    messages: list[dict[str, Any]],
     config: LedgerConfig,
 ) -> EntryResult:
     """Post entry with timeout."""
