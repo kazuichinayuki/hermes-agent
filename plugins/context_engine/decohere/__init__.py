@@ -107,8 +107,11 @@ class Decohere(ContextEngine):
     def should_compress(self, prompt_tokens: int = None) -> bool:
         """True for v2 sessions, False for legacy."""
         if self._io is None:
+            logger.info("Decohere: should_compress=False (no io)")
             return False
-        return self._io.is_v2()
+        result = self._io.is_v2()
+        logger.info("Decohere: should_compress=%s session=%s", result, self._session_id)
+        return result
 
     def compress(
         self,
@@ -123,7 +126,10 @@ class Decohere(ContextEngine):
         """
         sid = self._session_id
         if not sid or not self._io:
+            logger.warning("Decohere: compress() skipped — no session_id or io (sid=%s io=%s)", sid, self._io is not None)
             return messages
+
+        logger.info("Decohere: compress() session=%s msgs=%d", sid, len(messages))
 
         # ── Phase 1: post-turn processing ──
         turn_msgs = last_turn_messages(messages)
@@ -144,7 +150,7 @@ class Decohere(ContextEngine):
         if not range_ok.ok or not persist_ok.ok:
             self._metrics.record_degraded()
 
-        logger.debug("Decohere: Turn %d placeholder (skip=%s)", placeholder["n"], should_skip)
+        logger.info("Decohere: Turn %d placeholder (skip=%s)", placeholder["n"], should_skip)
         if not should_skip:
             self._tasks.schedule(sid, turn_msgs, self._io, self._metrics)
 
