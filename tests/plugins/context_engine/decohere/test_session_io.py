@@ -293,7 +293,7 @@ class TestCompressPipeline:
         result = d.compress(msgs)
 
         assert len(result) >= 2  # at least L1+L2 for prior turns
-        assert result[0]["role"] == "tool"       # L1 Spec
+        assert result[0]["role"] == "user"       # L1 Spec
         assert result[1]["role"] == "user"        # L2 Proc
         assert result[1]["name"] == "turn_context"
 

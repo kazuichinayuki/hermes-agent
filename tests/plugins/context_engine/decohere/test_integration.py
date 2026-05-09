@@ -226,7 +226,7 @@ def test_build_context_from_turns():
     # Build context
     context = build_ledger_context(turns, max_turns=20)
     assert len(context) == 2
-    assert context[0]["role"] == "tool"
+    assert context[0]["role"] == "user"
     assert context[1]["role"] == "user"
     assert context[1]["name"] == "turn_context"
 

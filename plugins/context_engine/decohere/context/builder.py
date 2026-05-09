@@ -33,7 +33,7 @@ def build_ledger_context(turns: list[dict[str, object]], max_turns: int) -> list
     l2 = "\n\n".join(proc_blocks)
 
     return [
-        {"role": "tool", "content": f"## Ledger Entries (Layer 1 — Spec)\n\n{l1}"},
+        {"role": "user", "name": "ledger_l1", "content": f"## Ledger Entries (Layer 1 — Spec)\n\n{l1}"},
         {"role": "user", "name": "turn_context", "content": f"## Ledger Entries (Layer 2 — Proc)\n\n{l2}"},
     ]
 
@@ -49,7 +49,7 @@ def build_fallback_context(
     """
     if len(turns) <= 1:
         return [
-            {"role": "tool", "content": format_structural_from_raw(last_turn_msgs)},
+            {"role": "user", "name": "ledger_l1", "content": format_structural_from_raw(last_turn_msgs)},
             {"role": "user", "name": "turn_context", "content": format_raw_compressed(last_turn_msgs)},
         ]
 
@@ -59,7 +59,7 @@ def build_fallback_context(
 
     # Latest turn: raw fallback
     entry_msgs.append(
-        {"role": "tool", "content": format_structural_from_raw(last_turn_msgs)}
+        {"role": "user", "name": "ledger_l1", "content": format_structural_from_raw(last_turn_msgs)}
     )
     entry_msgs.append(
         {"role": "user", "name": "turn_context", "content": format_raw_compressed(last_turn_msgs)}
@@ -88,6 +88,6 @@ def build_indexed_context(turns: list[dict[str, object]], max_turns: int) -> lis
 
     entry_msgs = build_ledger_context(selected_turns, max_turns)
     return [
-        {"role": "tool", "content": format_turn_index(index)},
+        {"role": "user", "name": "turn_index", "content": format_turn_index(index)},
         *entry_msgs,
     ]
