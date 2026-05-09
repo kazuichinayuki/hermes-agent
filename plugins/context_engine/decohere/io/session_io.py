@@ -1,8 +1,11 @@
 """Session I/O. The ONLY layer that touches files/DB.
 
 Wraps RawMessageStore and LedgerStore over a shared SQLite connection.
-No business logic, no formatting, no computation.
-"""
+WAL mode allows concurrent access; check_same_thread=False is needed
+because the gateway thread opens the connection but the agent thread
+calls compress() which writes through compute_range() and save_turn().
+Thread safety is guaranteed by WAL mode + per-session asyncio.Lock in
+TaskManager, not by Python's same-thread check."""
 
 from __future__ import annotations
 
@@ -31,6 +34,7 @@ class SessionIO:
         configure_connection(conn)
         ensure_schema(conn)
         run_migrations(conn)
+        conn.commit()
 
         self._conn = conn
         self._raw = RawMessageStore(conn)

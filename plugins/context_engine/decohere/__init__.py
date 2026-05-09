@@ -45,7 +45,7 @@ class Decohere(ContextEngine):
     last_prompt_tokens: int = 0
     last_completion_tokens: int = 0
     last_total_tokens: int = 0
-    threshold_tokens: int = 0
+    threshold_tokens: int = 200_000
     context_length: int = 0
     compression_count: int = 0
 

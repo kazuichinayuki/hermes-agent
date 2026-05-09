@@ -2437,3 +2437,70 @@ All constraints extracted from this plan. Each constraint maps to its source loc
 | X09 | context_engine.py never modified |
 | X10 | Entry posting never blocks message delivery |
 | X11 | Legacy sessions never batch-migrated in v1 |
+
+
+---
+
+## Appendix: SQLite Thread Safety — Analysis & Decision
+
+### Problem
+
+`SessionIO.__init__` is called from the gateway thread (via `on_session_start`).
+`SessionIO.compute_range()` and `SessionIO.save_turn()` are called from the agent
+thread (via `compress()`). Python's sqlite3 module, by default, raises
+`ProgrammingError` when a connection object is used from a different thread than
+the one that created it.
+
+### Three Standard Approaches
+
+#### Approach A: `check_same_thread=False` (chosen)
+
+```python
+conn = sqlite3.connect(db_path, check_same_thread=False)
+```
+
+**Why it's correct:** SQLite in WAL mode is designed for multi-connection concurrent
+access. The WAL journal handles readers and writers concurrently at the file level.
+Python's same-thread check predates WAL mode — the race conditions it guards against
+are already handled by SQLite's internal locking. Writes are further serialized by
+the per-session `asyncio.Lock` in `TaskManager`.
+
+This is the approach used by Flask, Django, and FastAPI with SQLite backends.
+
+#### Approach B: `threading.local()` — per-thread connections
+
+```python
+self._tls = threading.local()
+
+def _conn(self):
+    if not hasattr(self._tls, "conn"):
+        self._tls.conn = sqlite3.connect(self._db_path)
+        configure_connection(self._tls.conn)
+    return self._tls.conn
+```
+
+**Why not:** Adds ~30 lines of lazy-init boilerplate for the same end result. Two
+connections to the same WAL-mode database file offer no additional safety over one
+connection with the check disabled. More complex, same guarantees.
+
+#### Approach C: Open-commit-close per operation
+
+```python
+def compute_range(self, messages):
+    conn = sqlite3.connect(self._db_path)
+    configure_connection(conn)
+    result = RawMessageStore(conn).append(messages)
+    conn.commit()
+    conn.close()
+    return result
+```
+
+**Why not:** Zero thread-safety risk (no connection crosses threads), but adds
+connection overhead on every write. Useful as a fallback if WAL mode cannot be used.
+
+### Decision
+
+Approach A (`check_same_thread=False`). The constraint set is known: exactly two
+threads (gateway + agent), WAL mode enabled, writes serialized by per-session
+`asyncio.Lock`. Disabling Python's same-thread check is the correct and idiomatic
+choice for this architecture.
