@@ -27,7 +27,7 @@ class SessionIO:
         session_dir.mkdir(parents=True, exist_ok=True)
         db_path = str(session_dir / "decohere.db")
 
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, check_same_thread=False)
         configure_connection(conn)
         ensure_schema(conn)
         run_migrations(conn)
