@@ -50,7 +50,7 @@ class Decohere(ContextEngine):
     compression_count: int = 0
 
     # ── Compaction parameters ──
-    threshold_percent: float = 0.0
+    threshold_percent: float = 1.0
     protect_first_n: int = 0
     protect_last_n: int = 0
 
@@ -105,12 +105,18 @@ class Decohere(ContextEngine):
     # ── Context management ─────────────────────────────────────────────
 
     def should_compress(self, prompt_tokens: int = None) -> bool:
-        """True for v2 sessions, False for legacy."""
+        """True only when there are ledger entries to inject as context.
+
+        First turn has no prior entries — let raw messages flow through.
+        Subsequent turns with existing entries trigger compression to swap
+        raw history for structured L1+L2 ledger context.
+        """
         import sys
-        print(f"DECOHERE_SHOULD_COMPRESS io={self._io is not None} sid={self._session_id}", file=sys.stderr, flush=True)
         if self._io is None:
             return False
-        result = self._io.is_v2()
+        # Only compress if there are existing ledger entries to provide
+        result = self._io.is_v2() and self._io.turn_count() > 0
+        print(f"DECOHERE_SHOULD_COMPRESS io=True sid={self._session_id} turns={self._io.turn_count()} → {result}", file=sys.stderr, flush=True)
         return result
 
     def compress(
@@ -132,6 +138,9 @@ class Decohere(ContextEngine):
             return messages
 
         print(f"DECOHERE_COMPRESS_RUNNING sid={sid} msgs={len(messages)}", file=sys.stderr, flush=True)
+
+        # Filter out any None messages (can happen after session splits)
+        messages = [m for m in messages if m is not None]
 
         # ── Phase 1: post-turn processing ──
         turn_msgs = last_turn_messages(messages)

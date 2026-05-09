@@ -33,8 +33,19 @@ class TaskManager:
         io: SessionIO,
         metrics: MetricsCollector,
     ) -> None:
-        """Fire async posting. Non-blocking."""
-        asyncio.create_task(self._run(session_id, messages, io, metrics))
+        """Fire async posting. Non-blocking.
+
+        Silently skips if no event loop is running (sync contexts such as
+        unit tests or CLI sessions without an async runtime).
+        The placeholder is already persisted — only the LLM entry posting
+        step is deferred.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop — sync context. Placeholder already saved.
+            return
+        loop.create_task(self._run(session_id, messages, io, metrics))
 
     async def _run(
         self,
