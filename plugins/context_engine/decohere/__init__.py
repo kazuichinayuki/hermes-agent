@@ -106,11 +106,11 @@ class Decohere(ContextEngine):
 
     def should_compress(self, prompt_tokens: int = None) -> bool:
         """True for v2 sessions, False for legacy."""
+        import sys
+        print(f"DECOHERE_SHOULD_COMPRESS io={self._io is not None} sid={self._session_id}", file=sys.stderr, flush=True)
         if self._io is None:
-            logger.info("Decohere: should_compress=False (no io)")
             return False
         result = self._io.is_v2()
-        logger.info("Decohere: should_compress=%s session=%s", result, self._session_id)
         return result
 
     def compress(
@@ -124,12 +124,14 @@ class Decohere(ContextEngine):
         Phase 1: extract last turn → placeholder → async posting
         Phase 2: read existing specs → build L1+L2 → return
         """
+        import sys
+        print("DECOHERE_COMPRESS_CALLED", file=sys.stderr, flush=True)
         sid = self._session_id
         if not sid or not self._io:
-            logger.warning("Decohere: compress() skipped — no session_id or io (sid=%s io=%s)", sid, self._io is not None)
+            print(f"DECOHERE_COMPRESS_SKIPPED sid={sid} io={self._io is not None}", file=sys.stderr, flush=True)
             return messages
 
-        logger.info("Decohere: compress() session=%s msgs=%d", sid, len(messages))
+        print(f"DECOHERE_COMPRESS_RUNNING sid={sid} msgs={len(messages)}", file=sys.stderr, flush=True)
 
         # ── Phase 1: post-turn processing ──
         turn_msgs = last_turn_messages(messages)
