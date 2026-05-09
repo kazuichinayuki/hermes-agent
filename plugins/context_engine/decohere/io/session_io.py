@@ -40,7 +40,9 @@ class SessionIO:
     # ── Raw messages ──────────────────────────────────────────────────
 
     def compute_range(self, messages: list[dict[str, Any]]) -> tuple[int, int]:
-        return self._raw.append(messages)
+        result = self._raw.append(messages)
+        self._conn.commit()
+        return result
 
     def get_raw_messages(self, start: int = 0, end: int | None = None) -> list[dict[str, Any]]:
         return self._raw.get(start, end)
@@ -52,6 +54,7 @@ class SessionIO:
 
     def save_turn(self, turn: dict[str, object]) -> None:
         self._ledger.save_turn(turn)
+        self._conn.commit()
 
     def get_turns(self) -> list[dict[str, object]]:
         return self._ledger.get_turns()
@@ -68,4 +71,5 @@ class SessionIO:
         return True
 
     def close(self) -> None:
+        self._conn.commit()
         self._conn.close()
