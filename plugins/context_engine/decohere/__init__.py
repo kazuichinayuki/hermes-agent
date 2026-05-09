@@ -62,6 +62,7 @@ class Decohere(ContextEngine):
         self._metrics: MetricsCollector | None = None
         self._health: HealthReporter | None = None
         self._cfg: LedgerConfig | None = None
+        self._last_compressed_turns: int = 0
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -94,6 +95,7 @@ class Decohere(ContextEngine):
         self.last_completion_tokens = 0
         self.last_total_tokens = 0
         self.compression_count = 0
+        self._last_compressed_turns = 0
 
     # ── Token tracking ─────────────────────────────────────────────────
 
@@ -111,13 +113,9 @@ class Decohere(ContextEngine):
         Subsequent turns with existing entries trigger compression to swap
         raw history for structured L1+L2 ledger context.
         """
-        import sys
         if self._io is None:
             return False
-        # Only compress if there are existing ledger entries to provide
-        result = self._io.is_v2() and self._io.turn_count() > 0
-        print(f"DECOHERE_SHOULD_COMPRESS io=True sid={self._session_id} turns={self._io.turn_count()} → {result}", file=sys.stderr, flush=True)
-        return result
+        return self._io.is_v2() and self._io.turn_count() > 0
 
     def compress(
         self,
@@ -130,19 +128,14 @@ class Decohere(ContextEngine):
         Phase 1: extract last turn → placeholder → async posting
         Phase 2: read existing specs → build L1+L2 → return
         """
-        import sys
-        print("DECOHERE_COMPRESS_CALLED", file=sys.stderr, flush=True)
         sid = self._session_id
         if not sid or not self._io:
-            print(f"DECOHERE_COMPRESS_SKIPPED sid={sid} io={self._io is not None}", file=sys.stderr, flush=True)
             return messages
-
-        print(f"DECOHERE_COMPRESS_RUNNING sid={sid} msgs={len(messages)}", file=sys.stderr, flush=True)
 
         # Filter out any None messages (can happen after session splits)
         messages = [m for m in messages if m is not None]
 
-        # ── Phase 1: post-turn processing ──
+        # ── Post-turn processing: ALWAYS run (write placeholder, fire async posting) ──
         turn_msgs = last_turn_messages(messages)
         should_skip = should_skip_entry(turn_msgs)
         mechanical = mechanical_fields(turn_msgs)
@@ -153,19 +146,20 @@ class Decohere(ContextEngine):
             mechanical=mechanical,
             skipped=should_skip,
         )
-
         range_ok = self._health.verify_range(msg_range, len(turn_msgs))
         self._io.save_turn(placeholder)
         persist_ok = self._health.verify_persisted(placeholder["n"])
-
         if not range_ok.ok or not persist_ok.ok:
             self._metrics.record_degraded()
-
-        logger.info("Decohere: Turn %d placeholder (skip=%s)", placeholder["n"], should_skip)
         if not should_skip:
             self._tasks.schedule(sid, turn_msgs, self._io, self._metrics)
 
-        # ── Phase 2: context building ──
+        # ── Context building: only replace history if there are NEW turns to inject ──
+        current_turns = self._io.turn_count()
+        if current_turns <= self._last_compressed_turns:
+            return messages
+
+        self._last_compressed_turns = current_turns
         turns = self._io.get_turns()
         readiness = check_readiness(turns, self._io.turn_count())
 
