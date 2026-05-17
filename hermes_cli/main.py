@@ -10647,6 +10647,15 @@ def cmd_logs(args):
     )
 
 
+def cmd_decohere(args):
+    """Manage decohere session data — CRUD operations on ledger entries."""
+    import sys
+
+    from plugins.context_engine.decohere.cli import decohere_command
+
+    sys.exit(decohere_command(args))
+
+
 def _build_provider_choices() -> list[str]:
     """Build the --provider choices list from CANONICAL_PROVIDERS + 'auto'."""
     try:
@@ -13713,6 +13722,22 @@ Examples:
         help="Filter by component: gateway, agent, tools, cli, cron",
     )
     logs_parser.set_defaults(func=cmd_logs)
+
+    # =========================================================================
+    # decohere command
+    # =========================================================================
+    decohere_parser = subparsers.add_parser(
+        "decohere",
+        help="Manage decohere session data",
+        description="List, search, show, edit, delete, export, and manage decohere session data.",
+    )
+    decohere_subparsers = decohere_parser.add_subparsers(
+        dest="decohere_command",
+    )
+    from plugins.context_engine.decohere.cli import register_subparsers
+
+    register_subparsers(decohere_subparsers)
+    decohere_parser.set_defaults(func=cmd_decohere)
 
     # =========================================================================
     # Parse and execute

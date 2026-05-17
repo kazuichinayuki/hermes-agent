@@ -43,7 +43,9 @@ async def post_entry(
         user_msg, chain, assistant_response
     )
 
-    # 4. Call auxiliary model
+    # 4. Call auxiliary model with JSON response_format enforcement.
+    # Without this, providers like DeepSeek often wrap JSON in markdown fences,
+    # causing json.loads() to fail → empty {} → all fields default to empty.
     response = await async_call_llm(
         task="compression",
         messages=[
@@ -52,16 +54,54 @@ async def post_entry(
         ],
         temperature=config.temperature,
         max_tokens=config.max_tokens,
-        response_format={"type": "json_object"},
+        extra_body={"response_format": {"type": "json_object"}},
     )
 
     content = extract_content_or_reasoning(response) or "{}"
 
-    # 5. Parse + validate
+    # 5. Parse + validate with markdown-fence stripping
     import json
-    try:
-        raw = json.loads(content)
-    except json.JSONDecodeError:
-        raw = {}
+    raw = _extract_json(content)
 
     return validate_entry(raw)
+
+
+def _extract_json(text: str) -> dict:
+    """Extract JSON from text that may be wrapped in markdown fences.
+
+    Handles: ```json ... ```, ``` ... ```, and bare JSON.
+    Returns {} if no valid JSON found.
+    """
+    import json
+    import re
+
+    text = text.strip()
+
+    # Try bare JSON first (fast path for json_object response_format)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strip markdown fences
+    fence_patterns = [
+        re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.DOTALL),
+        re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL),
+    ]
+    for pat in fence_patterns:
+        m = pat.search(text)
+        if m:
+            try:
+                return json.loads(m.group(1).strip())
+            except json.JSONDecodeError:
+                continue
+
+    # Last resort: find first { ... } block
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    return {}

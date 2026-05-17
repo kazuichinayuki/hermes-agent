@@ -720,14 +720,24 @@ class SessionStore:
     
     def _save(self) -> None:
         """Save sessions index to disk (kept for session key -> ID mapping)."""
+        import errno
         import tempfile
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         sessions_file = self.sessions_dir / "sessions.json"
 
         data = {key: entry.to_dict() for key, entry in self._entries.items()}
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(self.sessions_dir), suffix=".tmp", prefix=".sessions_"
-        )
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(self.sessions_dir), suffix=".tmp", prefix=".sessions_"
+            )
+        except OSError as e:
+            if e.errno in (errno.EMFILE, errno.ENFILE, errno.ENOSPC):
+                logger.warning(
+                    "Cannot save sessions index: %s (skipping this save)", e
+                )
+                return
+            raise
+
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)

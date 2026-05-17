@@ -15,6 +15,7 @@ from typing import Any
 
 from ..db import configure_connection, ensure_schema, run_migrations
 from ..store import RawMessageStore, LedgerStore
+from .state_store import StateStore
 
 
 class SessionIO:
@@ -39,6 +40,7 @@ class SessionIO:
         self._conn = conn
         self._raw = RawMessageStore(conn)
         self._ledger = LedgerStore(conn)
+        self._state = StateStore(conn)
         self._session_id = session_id
 
     # ── Raw messages ──────────────────────────────────────────────────

@@ -14,14 +14,34 @@ def sanitize_path(path: str) -> str:
     return path
 
 
+def sanitize_text(text: str) -> str:
+    """Replace all occurrences of home dir with ~ in arbitrary text.
+
+    Unlike sanitize_path() which only handles prefix matching,
+    this replaces ALL occurrences anywhere in the string.
+    """
+    home = os.path.expanduser("~")
+    if home and home != "/":
+        return text.replace(home, "~")
+    return text
+
+
+def _sanitize_str(s: object) -> str:
+    """Sanitize a single string value. Returns empty string for non-strings."""
+    if isinstance(s, str):
+        return sanitize_text(s)
+    return ""
+
+
 def format_entry_layer(turn: dict[str, object]) -> str:
     """Format one turn's L1 Spec fields into a text block."""
     lines = [f"[Turn {turn.get('n', '?')}]"]
     lines.append(f"  message_range: {turn.get('message_range', [])}")
     lines.append(f"  tools: {_fmt_tools(turn.get('tools', []))}")
     lines.append(f"  files: {_fmt_files(turn.get('files_touched', []))}")
-    lines.append(f"  task: {turn.get('relevant_metadata', {}).get('task', '')}")
-    lines.append(f"  ref_class: {turn.get('relevant_metadata', {}).get('reference_class', '')}")
+    meta = turn.get('relevant_metadata', {}) or {}
+    lines.append(f"  task: {_sanitize_str(meta.get('task', ''))}")
+    lines.append(f"  ref_class: {_sanitize_str(meta.get('reference_class', ''))}")
     return "\n".join(lines)
 
 
@@ -35,12 +55,12 @@ def format_proc_layer(turn: dict[str, object]) -> str:
         lines.append("\nconcepts_and_definitions:")
         for c in concepts:
             if isinstance(c, dict):
-                lines.append(f"  • {c.get('term', '')}: {c.get('definition', '')}")
+                lines.append(f"  • {_sanitize_str(c.get('term', ''))}: {_sanitize_str(c.get('definition', ''))}")
 
     # Narrative
     narrative = turn.get("narrative", {}) or {}
     if narrative.get("summary"):
-        lines.append(f"\nnarrative: {narrative['summary']}")
+        lines.append(f"\nnarrative: {_sanitize_str(narrative['summary'])}")
 
     # Decisions
     decisions = turn.get("decisions_and_rationale", []) or []
@@ -48,9 +68,9 @@ def format_proc_layer(turn: dict[str, object]) -> str:
         lines.append("\ndecisions:")
         for d in decisions:
             if isinstance(d, dict):
-                lines.append(f"  • {d.get('decision', '')}")
+                lines.append(f"  • {_sanitize_str(d.get('decision', ''))}")
                 if d.get("rationale"):
-                    lines.append(f"    → {d['rationale']}")
+                    lines.append(f"    → {_sanitize_str(d['rationale'])}")
 
     # Procedures
     procedures = turn.get("procedures", []) or []
@@ -58,7 +78,7 @@ def format_proc_layer(turn: dict[str, object]) -> str:
         lines.append("\nprocedures:")
         for p in procedures:
             if isinstance(p, dict):
-                lines.append(f"  • {p.get('procedure', '')}")
+                lines.append(f"  • {_sanitize_str(p.get('procedure', ''))}")
 
     # Insights
     insights = turn.get("insights_and_learnings", []) or []
@@ -66,19 +86,19 @@ def format_proc_layer(turn: dict[str, object]) -> str:
         lines.append("\ninsights:")
         for i in insights:
             if isinstance(i, str):
-                lines.append(f"  • {i}")
+                lines.append(f"  • {_sanitize_str(i)}")
 
     # User intent
     intent = turn.get("user_intent", "")
     if intent:
-        lines.append(f"\nuser_intent: {intent}")
+        lines.append(f"\nuser_intent: {_sanitize_str(intent)}")
 
     # Critical reflection
     cr = turn.get("critical_reflection", {}) or {}
     if cr.get("improvement_directions"):
         lines.append("\n↳ improvements:")
         for d in cr["improvement_directions"]:
-            lines.append(f"  • {d}")
+            lines.append(f"  • {_sanitize_str(d)}")
 
     return "\n".join(lines)
 

@@ -780,10 +780,13 @@ async def vision_analyze_tool(
         logger.info("Processing image with vision model...")
         
         # Call the vision API via centralized router.
-        # Read timeout from config.yaml (auxiliary.vision.timeout), default 120s.
-        # Local vision models (llama.cpp, ollama) can take well over 30s.
+        # Read timeout / temperature / max_tokens from config.yaml
+        # (auxiliary.vision.*), with sensible defaults.
+        # max_tokens default is 4096 — 2000 is too low for image descriptions
+        # and causes truncation mid-sentence.
         vision_timeout = 120.0
         vision_temperature = 0.1
+        vision_max_tokens = 4096
         try:
             from hermes_cli.config import cfg_get, load_config
             _cfg = load_config()
@@ -794,13 +797,16 @@ async def vision_analyze_tool(
             _vtemp = _vision_cfg.get("temperature")
             if _vtemp is not None:
                 vision_temperature = float(_vtemp)
+            _vmt = _vision_cfg.get("max_tokens")
+            if _vmt is not None:
+                vision_max_tokens = int(_vmt)
         except Exception:
             pass
         call_kwargs = {
             "task": "vision",
             "messages": messages,
             "temperature": vision_temperature,
-            "max_tokens": 2000,
+            "max_tokens": vision_max_tokens,
             "timeout": vision_timeout,
         }
         if model:

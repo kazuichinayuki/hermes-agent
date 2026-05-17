@@ -14,12 +14,14 @@ from typing import Any
 from agent.context_engine import ContextEngine
 
 from .config import LedgerConfig
+from .config import load_decohere_config as _load_user_config
 from .context.builder import build_fallback_context, build_raw_context, build_ledger_context
 from .context.classifier import check_readiness, should_skip_entry
 from .context.formatter import format_entry_layer, format_proc_layer
 from .context.placeholder import build_placeholder
 from .core.extractor import last_turn_messages, mechanical_fields
 from .io.session_io import SessionIO
+from .knowledge import SharedStore, build_injection_message
 from .monitoring.reporter import HealthReporter
 from .scheduling.metrics import MetricsCollector
 from .scheduling.task_manager import TaskManager
@@ -63,6 +65,8 @@ class Decohere(ContextEngine):
         self._health: HealthReporter | None = None
         self._cfg: LedgerConfig | None = None
         self._last_compressed_turns: int = 0
+        self._shared_store: SharedStore | None = None
+        self._user_config: "DecohereUserConfig | None" = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -72,14 +76,24 @@ class Decohere(ContextEngine):
         home = Path(hermes_home).expanduser()
 
         self._session_id = session_id
-        self._cfg = LedgerConfig.from_aux_config(
-            self._read_aux_config(home / "config.yaml")
-        )
+        aux_cfg, comp_cfg = self._read_config(home / "config.yaml")
+        self._cfg = LedgerConfig.from_aux_config(aux_cfg, compression=comp_cfg)
+        # Read compression.threshold from config.yaml — the main model's
+        # context * threshold_percent = token budget before compression.
+        # Default 1.0 means "whole context window" which is too high when
+        # the compression model's context is smaller than the main model's.
+        if comp_cfg and comp_cfg.get("threshold") is not None:
+            self.threshold_percent = float(comp_cfg["threshold"])
+            self.threshold_tokens = int(self.context_length * self.threshold_percent)
         self._io = SessionIO(home, session_id)
         self._tasks = TaskManager(self._cfg)
         self._metrics = MetricsCollector()
         self._health = HealthReporter(self._io, self._metrics)
         self._health.snapshot_session_start(session_id, kwargs.get("platform", ""))
+        # ── Shared knowledge store ──
+        self._user_config = _load_user_config(home)
+        if self._user_config.knowledge_injection:
+            self._shared_store = SharedStore(home)
 
     def on_session_end(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         if self._health and self._tasks:
@@ -89,6 +103,9 @@ class Decohere(ContextEngine):
             self._tasks.cleanup(session_id)
         if self._io:
             self._io.close()
+        if self._shared_store:
+            self._shared_store.close()
+            self._shared_store = None
 
     def on_session_reset(self):
         self.last_prompt_tokens = 0
@@ -107,15 +124,17 @@ class Decohere(ContextEngine):
     # ── Context management ─────────────────────────────────────────────
 
     def should_compress(self, prompt_tokens: int = None) -> bool:
-        """True only when there are ledger entries to inject as context.
+        """Always return True when IO is ready so compress() runs every turn.
 
-        First turn has no prior entries — let raw messages flow through.
-        Subsequent turns with existing entries trigger compression to swap
-        raw history for structured L1+L2 ledger context.
+        compress() MUST run on turn 1 to write the current-turn placeholder;
+        without it turn_count() stays 0 forever and decohere never activates.
+        The context-building phase inside compress() is guarded by
+        _last_compressed_turns — it only swaps raw history for ledger context
+        when new (posted) entries are available.
         """
         if self._io is None:
             return False
-        return self._io.is_v2() and self._io.turn_count() > 0
+        return self._io.is_v2()
 
     def compress(
         self,
@@ -184,6 +203,27 @@ class Decohere(ContextEngine):
         self._health.snapshot_compress(
             readiness, len(messages), turn_numbers=tuple(included_turns),
         )
+        # ── Shared knowledge injection ──
+        if self._shared_store and self._user_config:
+            focus = focus_topic or _extract_intent_from_messages(messages)
+            injection_msg = build_injection_message(
+                store=self._shared_store,
+                knowledge_injection=self._user_config.knowledge_injection,
+                knowledge_sources=self._user_config.knowledge_sources,
+                knowledge_exclude=self._user_config.knowledge_exclude,
+                max_concepts=self._user_config.injection_max_concepts,
+                max_tokens_pct=self._user_config.injection_max_tokens_pct,
+                user_intent=focus,
+            )
+            if injection_msg:
+                result = list(result) + [injection_msg]
+        # ── Session state injection (L2 working memory) ──
+        if self._io:
+            state_block = self._io._state.format_for_context()
+            if state_block:
+                result = list(result) + [
+                    {"role": "user", "name": "shared_state", "content": state_block}
+                ]
         self.compression_count += 1
         return result
 
@@ -205,20 +245,61 @@ class Decohere(ContextEngine):
     def update_model(self, model: str, context_length: int,
                      base_url: str = "", api_key: str = "", provider: str = ""):
         self.context_length = context_length
+        # Read compression.threshold from config.yaml BEFORE computing
+        # threshold_tokens.  _check_compression_model_feasibility() runs
+        # during __init__, before on_session_start() — so we must resolve
+        # the threshold here, not in on_session_start.
+        self._load_threshold_from_config()
         self.threshold_tokens = int(context_length * self.threshold_percent)
+
+    def _load_threshold_from_config(self) -> None:
+        """Set threshold_percent from config.yaml's compression.threshold.
+
+        Tries the active HERMES_HOME config first, falls back to ~/.hermes.
+        Only reads the file once — cached by threshold_percent != 1.0.
+        """
+        if self.threshold_percent != 1.0:
+            return  # already loaded
+        import os, yaml
+        try:
+            home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+            cfg_path = os.path.join(home, "config.yaml")
+            if os.path.isfile(cfg_path):
+                with open(cfg_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                threshold = cfg.get("compression", {}).get("threshold")
+                if threshold is not None:
+                    self.threshold_percent = float(threshold)
+        except Exception:
+            pass
 
     # ── Config bootstrap ───────────────────────────────────────────────
 
     @staticmethod
-    def _read_aux_config(config_path: Path) -> dict | None:
-        """Read auxiliary config from config.yaml via hermes_home anchor."""
+    def _read_config(config_path: Path) -> tuple[dict | None, dict | None]:
+        """Read auxiliary + compression blocks from config.yaml.
+
+        Returns (auxiliary, compression) tuple.  The compression block
+        feeds decohere-native parameter mappings (protect_last_n → max_turns,
+        target_ratio → max_tokens).
+        """
         import yaml
         try:
             with open(config_path) as f:
                 cfg = yaml.safe_load(f) or {}
-            return cfg.get("auxiliary", {})
+            return cfg.get("auxiliary", {}), cfg.get("compression", {})
         except Exception:
-            return None
+            return None, None
+
+
+def _extract_intent_from_messages(messages: list[dict[str, Any]]) -> str:
+    """Extract a brief intent string from the last user message."""
+    for msg in reversed(messages):
+        if msg and msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, str) and content.strip():
+                return content.strip()[:200]
+    return ""
 
 
 def _extract_turn_numbers(messages: list[dict[str, Any]]) -> list[int]:

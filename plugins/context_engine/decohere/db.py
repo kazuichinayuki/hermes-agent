@@ -15,7 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -54,7 +54,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS concepts_fts
-            USING fts5(term, definition, content='', tokenize='unicode61');
+            USING fts5(term, definition, tokenize='unicode61');
+
+        CREATE TABLE IF NOT EXISTS session_state (
+            key   TEXT NOT NULL,
+            value TEXT,
+            scope TEXT NOT NULL DEFAULT 'session',
+            updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
+            PRIMARY KEY (key, scope)
+        );
         """
     )
 
@@ -88,6 +96,30 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     logger.info(
         "decohere: migrating DB from schema %d to %d", current, SCHEMA_VERSION
     )
-    # Future migrations go here:
-    # if current < 2: ...
+    if current < 2:
+        # v2: Convert concepts_fts from contentless (content='') to regular FTS5.
+        # Contentless FTS5 doesn't support DELETE; regular FTS5 does.
+        # The table must be dropped and recreated without content=''.
+        conn.execute("DROP TABLE IF EXISTS concepts_fts")
+        conn.execute(
+            "CREATE VIRTUAL TABLE concepts_fts "
+            "USING fts5(term, definition, tokenize='unicode61')"
+        )
+        # Repopulate from existing ledger_entries
+        import json
+        for turn_n, entry_json in conn.execute(
+            "SELECT turn_n, entry_json FROM ledger_entries"
+        ).fetchall():
+            try:
+                data = json.loads(entry_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            base = turn_n * 1000
+            for idx, c in enumerate(data.get("concepts_and_definitions", []) or []):
+                if isinstance(c, dict):
+                    conn.execute(
+                        "INSERT INTO concepts_fts (rowid, term, definition) "
+                        "VALUES (?, ?, ?)",
+                        (base + idx, c.get("term", ""), c.get("definition", "")),
+                    )
     set_schema_version(conn, SCHEMA_VERSION)

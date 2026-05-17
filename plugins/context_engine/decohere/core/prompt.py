@@ -42,6 +42,10 @@ _CREDENTIAL_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"api_key['\"]?\s*[:=]\s*['\"][^'\"]{8,}['\"]"), "api_key=***"),
 ]
 
+# Home directory prefix, resolved once at module load
+import os as _os
+_HOME = _os.path.expanduser("~")
+
 
 def build_entry_prompt(
     user_msg: str,
@@ -49,9 +53,9 @@ def build_entry_prompt(
     assistant_response: str,
 ) -> tuple[str, str]:
     """Build (system_prompt, user_prompt) tuple for entry posting."""
-    safe_user = strip_credentials(wrap_user_message(user_msg))
-    safe_tool_chain = strip_credentials(tool_chain)
-    safe_response = strip_credentials(assistant_response)
+    safe_user = sanitize_paths(strip_credentials(wrap_user_message(user_msg)))
+    safe_tool_chain = sanitize_paths(strip_credentials(tool_chain))
+    safe_response = sanitize_paths(strip_credentials(assistant_response))
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(
         user_msg=safe_user,
@@ -67,6 +71,17 @@ def strip_credentials(text: str) -> str:
     for pattern, replacement in _CREDENTIAL_PATTERNS:
         result = pattern.sub(replacement, result)
     return result
+
+
+def sanitize_paths(text: str) -> str:
+    """Replace local home directory paths with ~ before sending to external model.
+
+    Prevents /Users/alice/... and /home/bob/... from leaking to third-party
+    LLM providers during concept extraction.
+    """
+    if _HOME and _HOME != "/":
+        return text.replace(_HOME, "~")
+    return text
 
 
 def wrap_user_message(user_msg: str) -> str:
