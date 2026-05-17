@@ -55,6 +55,10 @@ gemini = GeminiProfile(
     api_mode="chat_completions",
     env_vars=("GOOGLE_API_KEY", "GEMINI_API_KEY"),
     base_url="https://generativelanguage.googleapis.com/v1beta",
+    # The /v1beta/models native endpoint uses x-goog-api-key, not Bearer auth.
+    # But doctor sends Authorization: Bearer to base_url + "/models".
+    # Point it at the OpenAI-compatible surface which accepts Bearer.
+    models_url="https://generativelanguage.googleapis.com/v1beta/openai/models",
     auth_type="api_key",
     default_aux_model="gemini-3-flash-preview",
 )
