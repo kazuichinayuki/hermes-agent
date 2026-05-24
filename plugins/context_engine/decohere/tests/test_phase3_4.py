@@ -147,9 +147,16 @@ class TestSmartShouldCompress:
         d = self._make_decohere(io_ready=False)
         assert d.should_compress() is False
 
-    def test_true_on_first_call(self):
-        """First call (last_compressed=0) should always return True."""
+    def test_false_on_first_call_fresh_session(self):
+        """First call with empty ledger (fresh session) returns False —
+        no data to inject, no point running compress()."""
         d = self._make_decohere(io_ready=True, turn_count=0, last_compressed=0)
+        assert d.should_compress() is False
+
+    def test_true_on_first_call_resumed_session(self):
+        """First call with existing ledger data (resumed session) returns True —
+        there's context to inject."""
+        d = self._make_decohere(io_ready=True, turn_count=3, last_compressed=0)
         assert d.should_compress() is True
 
     def test_true_when_new_turns_available(self):
@@ -158,9 +165,11 @@ class TestSmartShouldCompress:
         assert d.should_compress() is True
 
     def test_true_when_caught_up(self):
-        """Even when caught up, returns True to allow Phase 1 processing.
-        The mid-turn guard inside compress() handles the actual dedup."""
-        d = self._make_decohere(io_ready=True, turn_count=5, last_compressed=5)
+        """Even when caught up (turn_count == last_compressed), returns True
+        if new turns arrive after initial compress.  The mid-turn guard
+        inside compress() handles the actual dedup."""
+        d = self._make_decohere(io_ready=True, turn_count=5, last_compressed=3)
+        d._initial_compress_done = True
         assert d.should_compress() is True
 
     def test_false_after_session_end(self):

@@ -157,11 +157,17 @@ class Decohere(ContextEngine):
             return False
         if not self._io.is_v2():
             return False
-        # First call of session — run once to do initial Phase 1 extraction
-        # and inject any existing ledger context.  compress() sets this flag
-        # after running, so the second call returns False.
+        # First call of session — only if there's ledger data to inject
+        # (resumed session) or enough messages to extract from.  Without
+        # this check, compress() fires on the very first user message
+        # when the ledger is empty — a wasted cycle.
         if not getattr(self, '_initial_compress_done', False):
-            return True
+            try:
+                if self._io.turn_count() > 0:
+                    return True  # resumed session — inject existing context
+            except Exception:
+                pass
+            return False  # fresh session, no data yet — wait for real turns
         # New turns posted by background extraction tasks
         try:
             return self._io.turn_count() > self._last_compressed_turns
