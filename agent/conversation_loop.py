@@ -499,11 +499,17 @@ def run_conversation(
             )
             # May need multiple passes for very large sessions with small
             # context windows (each pass summarises the middle N turns).
+            # Injectors can't reduce tokens — use emergency compressor
+            _emg = None
+            if getattr(agent.context_compressor, '_is_context_injector', False):
+                from agent.conversation_compression import _get_emergency_compressor
+                _emg = _get_emergency_compressor(agent)
             for _pass in range(3):
                 _orig_len = len(messages)
                 messages, active_system_prompt = agent._compress_context(
                     messages, system_message, approx_tokens=_preflight_tokens,
                     task_id=effective_task_id,
+                    compressor_override=_emg,
                 )
                 if len(messages) >= _orig_len:
                     break  # Cannot compress further
@@ -2425,10 +2431,16 @@ def run_conversation(
                     compression_attempts += 1
                     if compression_attempts <= max_compression_attempts:
                         original_len = len(messages)
+                        # Injectors can't reduce tokens — use emergency compressor
+                        _emg = None
+                        if getattr(agent.context_compressor, '_is_context_injector', False):
+                            from agent.conversation_compression import _get_emergency_compressor
+                            _emg = _get_emergency_compressor(agent)
                         messages, active_system_prompt = agent._compress_context(
                             messages, system_message,
                             approx_tokens=approx_tokens,
                             task_id=effective_task_id,
+                            compressor_override=_emg,
                         )
                         # Compression created a new session — clear history
                         # so _flush_messages_to_session_db writes compressed
@@ -2592,9 +2604,15 @@ def run_conversation(
                     agent._emit_status(f"⚠️  Request payload too large (413) — compression attempt {compression_attempts}/{max_compression_attempts}...")
 
                     original_len = len(messages)
+                    # Injectors can't reduce tokens — use emergency compressor
+                    _emg = None
+                    if getattr(agent.context_compressor, '_is_context_injector', False):
+                        from agent.conversation_compression import _get_emergency_compressor
+                        _emg = _get_emergency_compressor(agent)
                     messages, active_system_prompt = agent._compress_context(
                         messages, system_message, approx_tokens=approx_tokens,
                         task_id=effective_task_id,
+                        compressor_override=_emg,
                     )
                     # Compression created a new session — clear history
                     # so _flush_messages_to_session_db writes compressed
@@ -2750,9 +2768,15 @@ def run_conversation(
                     agent._emit_status(f"🗜️ Context too large (~{approx_tokens:,} tokens) — compressing ({compression_attempts}/{max_compression_attempts})...")
 
                     original_len = len(messages)
+                    # Injectors can't reduce tokens — use emergency compressor
+                    _emg = None
+                    if getattr(agent.context_compressor, '_is_context_injector', False):
+                        from agent.conversation_compression import _get_emergency_compressor
+                        _emg = _get_emergency_compressor(agent)
                     messages, active_system_prompt = agent._compress_context(
                         messages, system_message, approx_tokens=approx_tokens,
                         task_id=effective_task_id,
+                        compressor_override=_emg,
                     )
                     # Compression created a new session — clear history
                     # so _flush_messages_to_session_db writes compressed
@@ -3537,16 +3561,28 @@ def run_conversation(
                     )
 
                 if agent.compression_enabled and _compressor.should_compress(_real_tokens):
-                    agent._safe_print("  ⟳ compacting context…")
-                    messages, active_system_prompt = agent._compress_context(
-                        messages, system_message,
-                        approx_tokens=agent.context_compressor.last_prompt_tokens,
-                        task_id=effective_task_id,
-                    )
-                    # Compression created a new session — clear history so
-                    # _flush_messages_to_session_db writes compressed messages
-                    # to the new session (see preflight compression comment).
-                    conversation_history = None
+                    _is_injector = getattr(_compressor, '_is_context_injector', False)
+                    if _is_injector:
+                        # Context injector (e.g. Decohere): call compress()
+                        # directly for Phase 1 extraction side effects.
+                        # Do NOT use return value, do NOT rotate session,
+                        # do NOT emit status messages.
+                        try:
+                            _compressor.compress(messages, current_tokens=_real_tokens)
+                        except Exception:
+                            pass
+                    else:
+                        # Real token-pressure compressor: full machinery
+                        agent._safe_print("  ⟳ compacting context…")
+                        messages, active_system_prompt = agent._compress_context(
+                            messages, system_message,
+                            approx_tokens=agent.context_compressor.last_prompt_tokens,
+                            task_id=effective_task_id,
+                        )
+                        # Compression created a new session — clear history so
+                        # _flush_messages_to_session_db writes compressed messages
+                        # to the new session (see preflight compression comment).
+                        conversation_history = None
                 
                 # Save session log incrementally (so progress is visible even if interrupted)
                 agent._session_messages = messages

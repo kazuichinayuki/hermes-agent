@@ -15,12 +15,21 @@ The engine is responsible for:
   - Optionally exposing tools the agent can call (e.g. lcm_grep)
   - Tracking token usage from API responses
 
+Engines come in two flavours:
+  - **Reducers** (default): compress() returns a shorter message list.
+    May trigger session rotation.  Built-in ContextCompressor is a reducer.
+  - **Injectors** (_is_context_injector = True): compress() injects
+    structured context but does NOT shorten the message list.  Never
+    triggers session rotation.  Decohere is an injector.
+
 Lifecycle:
   1. Engine is instantiated and registered (plugin register() or default)
   2. on_session_start() called when a conversation begins
   3. update_from_response() called after each API response with usage data
   4. should_compress() checked after each turn
   5. compress() called when should_compress() returns True
+     - For injectors: called directly, no session rotation machinery
+     - For reducers: called via _compress_context() with session rotation
   6. on_session_end() called at real session boundaries (CLI exit, /reset,
      gateway session expiry) — NOT per-turn
 """
@@ -30,7 +39,25 @@ from typing import Any, Dict, List
 
 
 class ContextEngine(ABC):
-    """Base class all context engines must implement."""
+    """Base class all context engines must implement.
+
+    Subclasses are either **reducers** (shorten the message list to fit
+    the token budget) or **injectors** (add structured context without
+    removing messages).  Set ``_is_context_injector = True`` on injector
+    subclasses so the conversation loop skips session rotation and the
+    "🗜️ Compacting context" status message.
+    """
+
+    # -- Engine type --------------------------------------------------------
+    #
+    # Set to True for engines that INJECT context (additive) rather than
+    # REDUCE tokens (subtractive).  The conversation loop uses this to:
+    #   - Skip session rotation after compress()
+    #   - Suppress the "🗜️ Compacting context" status message
+    #   - Bypass _compress_context() on the post-tool path
+    #   - Fall back to the built-in ContextCompressor for error recovery
+    #     (context overflow / 413) since injectors cannot reduce tokens.
+    _is_context_injector: bool = False
 
     # -- Identity ----------------------------------------------------------
 
@@ -87,11 +114,14 @@ class ContextEngine(ABC):
     ) -> List[Dict[str, Any]]:
         """Compact the message list and return the new message list.
 
-        This is the main entry point. The engine receives the full message
-        list and returns a (possibly shorter) list that fits within the
-        context budget. The implementation is free to summarize, build a
-        DAG, or do anything else — as long as the returned list is a valid
-        OpenAI-format message sequence.
+        **For reducers** (default): returns a shorter list that fits within
+        the token budget.  Called via ``_compress_context()`` with full
+        session rotation machinery.
+
+        **For injectors** (``_is_context_injector = True``): performs
+        side effects (Phase 1 extraction, context building) and may
+        return a different list.  Called DIRECTLY by the conversation
+        loop, bypassing ``_compress_context()``.
 
         Args:
             focus_topic: Optional topic string from manual ``/compress <focus>``.

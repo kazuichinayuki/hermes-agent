@@ -44,6 +44,11 @@ class Decohere(ContextEngine):
     """
 
     name = "decohere"
+    # Declares this engine as a context INJECTOR, not a token REDUCER.
+    # compress_context() checks this to skip session rotation + status
+    # messages.  Without it, Decohere's shorter return list triggers
+    # session rotation → state reset → infinite loop.
+    _is_context_injector = True
 
     # ── Token state (read by run_agent.py) ──
     last_prompt_tokens: int = 0

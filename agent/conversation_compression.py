@@ -41,6 +41,37 @@ from agent.model_metadata import estimate_request_tokens_rough
 logger = logging.getLogger(__name__)
 
 
+def _get_emergency_compressor(agent: Any) -> "ContextCompressor":
+    """Get or create a temporary built-in ContextCompressor for error recovery.
+
+    When the active context engine is an injector (e.g. Decohere), it cannot
+    reduce tokens — calling its compress() on a context overflow or 413 path
+    will NOT shrink the message list.  This helper creates a temporary
+    ContextCompressor instance configured from the agent's current model
+    settings so error recovery paths can use it to actually reduce tokens.
+
+    The instance is cached on ``agent._emergency_compressor`` to avoid
+    re-creation on subsequent retries within the same conversation loop.
+    """
+    cached = getattr(agent, "_emergency_compressor", None)
+    if cached is not None:
+        return cached
+    # Lazy import to avoid circular dependency
+    from agent.context_compressor import ContextCompressor
+    compressor = ContextCompressor(
+        model=agent.model,
+        base_url=getattr(agent, "base_url", ""),
+        api_key=getattr(agent, "api_key", ""),
+        provider=getattr(agent, "provider", ""),
+        api_mode=getattr(agent, "api_mode", ""),
+        config_context_length=getattr(
+            agent.context_compressor, "context_length", None
+        ),
+    )
+    agent._emergency_compressor = compressor
+    return compressor
+
+
 def check_compression_model_feasibility(agent: Any) -> None:
     """Warn at session start if the auxiliary compression model's context
     window is smaller than the main model's compression threshold.
@@ -257,6 +288,7 @@ def compress_context(
     task_id: str = "default",
     focus_topic: Optional[str] = None,
     force: bool = False,
+    compressor_override: Any = None,
 ) -> Tuple[list, str]:
     """Compress conversation context and split the session in SQLite.
 
@@ -301,9 +333,18 @@ def compress_context(
         f"{approx_tokens:,}" if approx_tokens else "unknown", agent.model,
         focus_topic,
     )
-    agent._emit_status(
-        "🗜️ Compacting context — summarizing earlier conversation so I can continue..."
-    )
+    # When compressor_override is set (error recovery with emergency
+    # compressor), use it instead of the active engine.  The override is
+    # always a built-in ContextCompressor (a reducer), so always show the
+    # compacting status.
+    _compressor = compressor_override or agent.context_compressor
+    # Don't emit the scary "Compacting" message for context injectors —
+    # they do lightweight injection, not heavy summarization.
+    # But DO emit it when using the emergency compressor override.
+    if compressor_override or not getattr(_compressor, '_is_context_injector', False):
+        agent._emit_status(
+            "🗜️ Compacting context — summarizing earlier conversation so I can continue..."
+        )
 
     # Notify external memory provider before compression discards context
     if agent._memory_manager:
@@ -313,19 +354,19 @@ def compress_context(
             pass
 
     try:
-        compressed = agent.context_compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic, force=force)
+        compressed = _compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic, force=force)
     except TypeError:
         # Plugin context engine with strict signature that doesn't accept
         # focus_topic / force — fall back to calling without them.
-        compressed = agent.context_compressor.compress(messages, current_tokens=approx_tokens)
+        compressed = _compressor.compress(messages, current_tokens=approx_tokens)
 
     # If compression aborted (aux LLM failed to produce a usable summary)
     # the compressor returns the input messages unchanged.  Surface the
     # error to the user, skip the session-rotation work entirely (no
     # session has logically ended), and let auto-compress callers detect
     # the no-op via len(returned) == len(input).
-    if getattr(agent.context_compressor, "_last_compress_aborted", False):
-        _err = getattr(agent.context_compressor, "_last_summary_error", None) or "unknown error"
+    if getattr(_compressor, "_last_compress_aborted", False):
+        _err = getattr(_compressor, "_last_summary_error", None) or "unknown error"
         if getattr(agent, "_last_compression_summary_warning", None) != _err:
             agent._last_compression_summary_warning = _err
             agent._emit_warning(
@@ -338,7 +379,7 @@ def compress_context(
             _existing_sp = agent._build_system_prompt(system_message)
         return messages, _existing_sp
 
-    summary_error = getattr(agent.context_compressor, "_last_summary_error", None)
+    summary_error = getattr(_compressor, "_last_summary_error", None)
     if summary_error:
         if getattr(agent, "_last_compression_summary_warning", None) != summary_error:
             agent._last_compression_summary_warning = summary_error
@@ -351,8 +392,8 @@ def compress_context(
         # and get recovered by retrying on main?  Surface that so users
         # know their auxiliary.compression.model setting is broken even
         # though compression succeeded.
-        _aux_fail_model = getattr(agent.context_compressor, "_last_aux_model_failure_model", None)
-        _aux_fail_err = getattr(agent.context_compressor, "_last_aux_model_failure_error", None)
+        _aux_fail_model = getattr(_compressor, "_last_aux_model_failure_model", None)
+        _aux_fail_err = getattr(_compressor, "_last_aux_model_failure_error", None)
         if _aux_fail_model:
             # Dedup on (model, error) so we don't spam on every compaction
             _aux_key = (_aux_fail_model, _aux_fail_err)
@@ -372,10 +413,20 @@ def compress_context(
     new_system_prompt = agent._build_system_prompt(system_message)
     agent._cached_system_prompt = new_system_prompt
 
-    # Skip session split if compression didn't actually reduce messages
-    # (decohere returns messages unchanged when no new ledger entries exist)
-    _compression_was_noop = (len(compressed) == len(messages))
+    # Skip session split if compression didn't actually reduce messages.
+    #
+    # When compressor_override is set (emergency fallback), the active
+    # engine is an injector but _compressor is the built-in reducer —
+    # check the ACTUAL compressor used, not agent.context_compressor.
+    _is_injector = (not compressor_override) and getattr(_compressor, '_is_context_injector', False)
+    _compression_was_noop = _is_injector or (len(compressed) == len(messages))
     if _compression_was_noop:
+        if _is_injector:
+            # Injector: return the ORIGINAL messages (injector's output is
+            # used only for context building side effects, not as the new
+            # message list).  The injector may have modified messages
+            # in-place or the hint is handled elsewhere.
+            compressed = messages
         agent._vprint(
             f"{agent.log_prefix}Compression skipped — no new ledger entries available.",
             force=False,
