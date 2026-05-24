@@ -22,7 +22,7 @@ class LedgerConfig:
     provider: str = "openrouter"
     temperature: float = 0.1
     max_tokens: int | None = None
-    timeout: float = 5.0
+    timeout: float = 30.0
     max_turns: int = 20
 
     @classmethod

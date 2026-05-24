@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from agent.auxiliary_client import async_call_llm, extract_content_or_reasoning
 
 from ..config import LedgerConfig
@@ -34,6 +36,14 @@ async def post_entry(
             content = msg["content"]
             if isinstance(content, str) and not msg.get("tool_calls"):
                 assistant_response = content
+
+    # ── Defense-in-depth: detect and skip regurgitated turns ──
+    # Even though compress() should prevent gutted turns from being
+    # scheduled, a belt-and-suspenders check here prevents phantom
+    # entries if the guard fails or the messages were stripped
+    # incompletely.
+    if _is_regurgitated_input(user_msg, assistant_response):
+        return validate_entry({})
 
     # 2. Build tool chain log
     chain = tool_chain_log(messages)
@@ -105,3 +115,48 @@ def _extract_json(text: str) -> dict:
             pass
 
     return {}
+
+
+_LEDGER_HEADER_RE = re.compile(r"^## Ledger Entries\b", re.MULTILINE)
+_LEDGER_MARKER_RE = re.compile(r"<!-- DECOHERE:BEGIN -->")
+_TURN_BLOCK_RE = re.compile(
+    r"\[Turn \d+\]\s*\n\s*(?:message_range:|tools:|files:|task:|ref_class:)"
+)
+
+
+def _is_regurgitated_input(user_msg: str, assistant_response: str) -> bool:
+    """True if the input looks like regurgitated ledger context.
+
+    When the LLM echoes injected ledger context in its assistant
+    response, the extraction model would see it as new content and
+    create phantom duplicate entries.  This function checks for
+    telltale signs of regurgitation.
+
+    Returns True when:
+    - The assistant response contains ``## Ledger Entries`` headers
+    - The assistant response contains decohere machine markers
+    - The assistant response contains standalone ``[Turn N]`` blocks
+      with ledger field names, AND has no substantial original content
+
+    False positives (real assistant content that happens to match)
+    are rare because real conversations don't contain ledger markup.
+    """
+    if not assistant_response or not assistant_response.strip():
+        return False
+
+    # Fast checks: ledger markup is highly specific
+    if _LEDGER_HEADER_RE.search(assistant_response):
+        return True
+    if _LEDGER_MARKER_RE.search(assistant_response):
+        return True
+
+    # [Turn N] blocks are more ambiguous — only flag when the
+    # assistant response is dominated by them (short content,
+    # multiple blocks).
+    turn_blocks = len(_TURN_BLOCK_RE.findall(assistant_response))
+    if turn_blocks >= 3:
+        return True
+    if turn_blocks >= 1 and len(assistant_response.strip()) < 500:
+        return True
+
+    return False

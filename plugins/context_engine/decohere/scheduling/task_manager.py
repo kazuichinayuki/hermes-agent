@@ -91,7 +91,7 @@ class TaskManager:
             if result.outcome is Outcome.OK and result.turn is not None:
                 _auto_import_concepts(result.turn, session_id, io)
 
-            self._pending[session_id] -= 1
+            self._pending[session_id] = self._pending.get(session_id, 0) - 1
 
     def cleanup(self, session_id: str) -> None:
         self._locks.pop(session_id, None)

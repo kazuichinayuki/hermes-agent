@@ -113,7 +113,7 @@ def build_injection_message(
     )
 
     return {
-        "role": "user",
+        "role": "system",
         "name": "shared_knowledge",
         "content": "\n".join(lines),
     }

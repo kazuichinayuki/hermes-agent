@@ -44,8 +44,8 @@ def test_build_ledger_context_two_messages():
     turns = [_make_turn(1), _make_turn(2)]
     result = build_ledger_context(turns, 20)
     assert len(result) == 2
-    assert result[0]["role"] == "user"
-    assert result[1]["role"] == "user"
+    assert result[0]["role"] == "system"
+    assert result[1]["role"] == "system"
     assert result[1]["name"] == "turn_context"
 
 
@@ -121,5 +121,5 @@ def test_build_indexed_context_many_turns():
     turns = [_make_turn(i) for i in range(1, 25)]
     result = build_indexed_context(turns, 20)
     assert len(result) == 3
-    assert result[0]["role"] == "user"
+    assert result[0]["role"] == "system"
     assert "Turn Index" in result[0]["content"]

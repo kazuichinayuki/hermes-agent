@@ -1175,6 +1175,7 @@ class AIAgent:
         """
         self._drop_trailing_empty_response_scaffolding(messages)
         self._apply_persist_user_message_override(messages)
+        self._strip_regurgitated_ledger_blocks(messages)
         self._session_messages = messages
         self._save_session_log(messages)
         self._flush_messages_to_session_db(messages, conversation_history)
@@ -1231,6 +1232,37 @@ class AIAgent:
             and messages[-1].get("tool_calls")
         ):
             messages.pop()
+
+    def _strip_regurgitated_ledger_blocks(self, messages: List[Dict]) -> None:
+        """Strip LLM-regurgitated ledger blocks from messages before persistence.
+
+        The decohere engine injects structured ledger context as system messages.
+        The LLM may regurgitate these as "## Ledger Entries (Layer ...)" blocks
+        in its assistant response.  These blocks must be stripped before saving
+        to the session store, otherwise they feed back into extraction next
+        turn — creating a recursive loop.
+
+        Only strips from assistant/user messages (no ledger name field).
+        Injected ledger messages (with name=ledger_l1/turn_context/…) are
+        intentionally preserved.
+        """
+        _LEDGER_NAMES = frozenset({
+            "ledger_l1", "turn_context", "turn_index",
+            "shared_state", "shared_knowledge",
+        })
+        _LEDGER_SPLIT = re.compile(r"^## Ledger Entries\b", re.MULTILINE)
+
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("name") in _LEDGER_NAMES:
+                continue
+            content = msg.get("content", "")
+            if not isinstance(content, str) or "## Ledger Entries" not in content:
+                continue
+            # Split on the first ledger header; keep only text before it.
+            parts = _LEDGER_SPLIT.split(content, maxsplit=1)
+            msg["content"] = parts[0].strip()
 
     def _repair_message_sequence(self, messages: List[Dict]) -> int:
         """Forwarder — see ``agent.agent_runtime_helpers.repair_message_sequence``."""

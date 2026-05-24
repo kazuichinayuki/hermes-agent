@@ -354,6 +354,13 @@ class SessionDB:
             self._conn.row_factory = sqlite3.Row
             apply_wal_with_fallback(self._conn, db_label="state.db")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            # busy_timeout makes SQLite's internal busy handler wait this
+            # many ms before returning SQLITE_BUSY.  Combined with WAL mode
+            # and the application-level jitter retry in _execute_write(),
+            # this gives the system two chances to resolve lock contention:
+            #   1. SQLite waits up to 5s internally (transparent to caller)
+            #   2. If that fails, _execute_write retries with random jitter
+            self._conn.execute("PRAGMA busy_timeout=5000")
 
             self._init_schema()
         except Exception as exc:

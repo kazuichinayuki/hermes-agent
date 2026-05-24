@@ -292,12 +292,14 @@ class TestCompressPipeline:
         ]
         result = d.compress(msgs)
 
-        assert len(result) >= 2  # at least L1+L2 for prior turns
-        assert result[0]["role"] == "user"       # L1 Spec
-        assert result[1]["role"] == "user"        # L2 Proc
-        assert result[1]["name"] == "turn_context"
+        assert len(result) >= 1  # at least the hint context message
+        # After build_hint_context migration: single compact summary message
+        # instead of separate L1 (Spec) + L2 (Proc) blocks.
+        hint_msg = next((m for m in result if m.get("name") == "turn_context"), None)
+        assert hint_msg is not None, f"Expected turn_context message, got: {[m.get('name') for m in result]}"
+        assert hint_msg["role"] == "system"
 
-        content = result[0]["content"] + result[1]["content"]
+        content = hint_msg["content"]
         assert "Turn 2" in content
 
         d._io.close()

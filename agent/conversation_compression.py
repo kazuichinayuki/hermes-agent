@@ -372,7 +372,16 @@ def compress_context(
     new_system_prompt = agent._build_system_prompt(system_message)
     agent._cached_system_prompt = new_system_prompt
 
-    if agent._session_db:
+    # Skip session split if compression didn't actually reduce messages
+    # (decohere returns messages unchanged when no new ledger entries exist)
+    _compression_was_noop = (len(compressed) == len(messages))
+    if _compression_was_noop:
+        agent._vprint(
+            f"{agent.log_prefix}Compression skipped — no new ledger entries available.",
+            force=False,
+        )
+
+    if agent._session_db and not _compression_was_noop:
         try:
             # Propagate title to the new session with auto-numbering
             old_title = agent._session_db.get_session_title(agent.session_id)
@@ -417,13 +426,19 @@ def compress_context(
     try:
         _old_sid = locals().get("old_session_id")
         if _old_sid and hasattr(agent.context_compressor, "on_session_start"):
+            from hermes_constants import get_hermes_home
             agent.context_compressor.on_session_start(
                 agent.session_id or "",
                 boundary_reason="compression",
                 old_session_id=_old_sid,
+                hermes_home=str(get_hermes_home()),
+                thread_id=getattr(agent, "thread_id", None) or "",
+                chat_id=getattr(agent, "chat_id", None) or "",
             )
     except Exception as _ce_err:
-        logger.debug("context engine on_session_start (compression): %s", _ce_err)
+        logger.warning(
+            "context engine on_session_start (compression) failed: %s", _ce_err
+        )
 
     # Notify memory providers of the compression-driven session_id rotation
     # so provider-cached per-session state (Hindsight's _document_id,

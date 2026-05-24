@@ -72,7 +72,11 @@ def apply_anthropic_cache_control(
         breakpoints_used += 1
 
     remaining = 4 - breakpoints_used
-    non_sys = [i for i in range(len(messages)) if messages[i].get("role") != "system"]
+    non_sys = [
+        i for i in range(len(messages))
+        if messages[i].get("role") != "system"
+        and not messages[i].get("_decohere_injected")
+    ]
     for idx in non_sys[-remaining:]:
         _apply_cache_marker(messages[idx], marker, native_anthropic=native_anthropic)
 

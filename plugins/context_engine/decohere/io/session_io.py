@@ -42,6 +42,8 @@ class SessionIO:
         self._ledger = LedgerStore(conn)
         self._state = StateStore(conn)
         self._session_id = session_id
+        self._closing = False
+        self._pending_writers = 0
 
     # ── Raw messages ──────────────────────────────────────────────────
 
@@ -59,6 +61,17 @@ class SessionIO:
     # ── Ledger ─────────────────────────────────────────────────────────
 
     def save_turn(self, turn: dict[str, object]) -> None:
+        if self._closing:
+            # Session has ended — this write belongs to a background task
+            # that completed after the session was closed.  Drop it and
+            # count down; the last writer closes the connection.
+            self._pending_writers -= 1
+            if self._pending_writers <= 0:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+            return
         self._ledger.save_turn(turn)
         self._conn.commit()
 
@@ -77,5 +90,17 @@ class SessionIO:
         return True
 
     def close(self) -> None:
+        """Commit and defer actual connection close if background writers remain.
+
+        When ``_pending_writers`` > 0 (injected by ``on_session_end`` before
+        calling close), the connection stays open so in-flight decohere
+        posting tasks can finish cleanly.  Each writer that arrives after
+        close() is dropped and decrements the counter; the last one closes
+        the connection.  When there are no pending writers the connection is
+        closed immediately.
+        """
         self._conn.commit()
-        self._conn.close()
+        if self._pending_writers > 0:
+            self._closing = True
+        else:
+            self._conn.close()
