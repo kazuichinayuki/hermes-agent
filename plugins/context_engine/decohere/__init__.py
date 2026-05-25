@@ -414,7 +414,8 @@ class Decohere(ContextEngine):
         }
 
     def update_model(self, model: str, context_length: int,
-                     base_url: str = "", api_key: str = "", provider: str = ""):
+                     base_url: str = "", api_key: str = "", provider: str = "",
+                     api_mode: str = "", **kwargs):
         self.context_length = context_length
         # Always 1.0 — Decohere doesn't do token-pressure compression.
         # See class-level comment on threshold_percent.
