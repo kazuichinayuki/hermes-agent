@@ -3564,11 +3564,13 @@ def run_conversation(
                     _is_injector = getattr(_compressor, '_is_context_injector', False)
                     if _is_injector:
                         # Context injector (e.g. Decohere): call compress()
-                        # directly for Phase 1 extraction side effects.
-                        # Do NOT use return value, do NOT rotate session,
-                        # do NOT emit status messages.
+                        # directly for Phase 1 extraction side effects, AND to
+                        # receive the injected context.
+                        # Do NOT rotate session, do NOT emit status messages.
                         try:
-                            _compressor.compress(messages, current_tokens=_real_tokens)
+                            _messages = _compressor.compress(messages, current_tokens=_real_tokens)
+                            if _messages is not None:
+                                messages = _messages
                         except Exception:
                             pass
                     else:
