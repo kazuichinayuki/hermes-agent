@@ -1557,6 +1557,10 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         compress_end = self._find_tail_cut_by_tokens(messages, compress_start)
 
         if compress_start >= compress_end:
+            self._last_compress_aborted = True
+            self._ineffective_compression_count += 1
+            if not self.quiet_mode:
+                logger.debug("Refusing to compress: tail overlaps head (not enough history)")
             return messages
 
         turns_to_summarize = messages[compress_start:compress_end]
@@ -1619,6 +1623,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             self._last_summary_dropped_count = 0  # nothing actually dropped
             self._last_summary_fallback_used = False
             self._last_compress_aborted = True
+            self._ineffective_compression_count += 1
             if not self.quiet_mode:
                 logger.warning(
                     "Summary generation failed — aborting compression "
