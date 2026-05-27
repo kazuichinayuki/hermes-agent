@@ -325,8 +325,9 @@ class Decohere(ContextEngine):
         "description": (
             "Retrieve structured conversation context from the decohere "
             "ledger. Returns turn-by-turn summaries, decisions, procedures, "
-            "and insights from earlier in this session. Use when you need "
-            "to recall what was discussed, decided, or implemented earlier."
+            "and insights from earlier in this session. "
+            "CRITICAL: Use this tool IMMEDIATELY if you lose track of the overarching goal, "
+            "encounter a cascade of tool failures, or need to recall the rationale for previous decisions."
         ),
         "parameters": {
             "type": "object",
