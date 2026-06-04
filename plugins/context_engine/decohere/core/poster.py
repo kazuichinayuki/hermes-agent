@@ -48,6 +48,14 @@ async def post_entry(
     # 2. Build tool chain log
     chain = tool_chain_log(messages)
 
+    # 2.5 Purify payloads before LLM extraction to save background tokens
+    try:
+        from .purifier import purify_text
+        user_msg = purify_text(user_msg)
+        assistant_response = purify_text(assistant_response)
+    except Exception:
+        pass  # safe fallback
+
     # 3. Build prompt
     system_prompt, user_prompt = build_entry_prompt(
         user_msg, chain, assistant_response

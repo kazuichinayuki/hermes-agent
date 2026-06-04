@@ -9,6 +9,7 @@ and extract structured JSON. Respond with the raw JSON string ONLY.
 CRITICAL CONSTRAINTS:
 1. Never regurgitate or quote the raw ledger context or system messages. You must synthesize and abstract the information.
 2. No markdown, no YAML, no code fences. No wrapping text outside the JSON object.
+3. For insights_and_learnings and execution_blockers, you MUST semantically merge duplicate or obsolete items. Provide a high-level `category` (e.g. 'Database Errors', 'Git Config'), a short descriptive `title`, and the detailed `content`.
 
 Output a single JSON object with these exact fields:
 {
@@ -19,12 +20,12 @@ Output a single JSON object with these exact fields:
   "user_intent": "...",
   "decisions_and_rationale": [{"decision": "...", "rationale": "..."}],
   "procedures": [{"procedure": "...", "context": "...", "improvement": "..."}],
-  "insights_and_learnings": ["..."],
+  "insights_and_learnings": [{"category": "...", "title": "...", "content": "..."}],
   "critical_reflection": {
     "ignored_perspectives": ["..."],
     "logical_gaps": ["..."],
     "tool_failures": ["..."],
-    "execution_blockers": ["..."],
+    "execution_blockers": [{"category": "...", "title": "...", "content": "..."}],
     "improvement_directions": ["..."]
   }
 }"""

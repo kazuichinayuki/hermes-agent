@@ -30,7 +30,6 @@ from .scheduling.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
-
 class Decohere(ContextEngine):
     """Structured ledger entries as context. Thin coordinator.
 
@@ -81,6 +80,14 @@ class Decohere(ContextEngine):
         self._canary_token: str | None = None
         self._shared_store: SharedStore | None = None
         self._user_config: "DecohereUserConfig | None" = None
+
+        # Register Purifier hook for global tool interception
+        try:
+            from hermes_cli.plugins import get_plugin_manager
+            pm = get_plugin_manager()
+            pm.register_hook("transform_tool_result", self.transform_tool_result)
+        except Exception as e:
+            logger.warning("Decohere failed to register transform_tool_result hook: %s", e)
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -399,6 +406,20 @@ class Decohere(ContextEngine):
             ensure_ascii=False,
         )
 
+    def transform_tool_result(self, tool_name: str, args: dict, result: str, **kwargs) -> str | None:
+        """Purify the tool result before it enters context."""
+        try:
+            if not isinstance(result, str):
+                return None
+            from .core.purifier import purify_text
+            purified = purify_text(result)
+            if purified != result:
+                logger.debug("Decohere purifier compressed output for tool %s (len %d -> %d)", tool_name, len(result), len(purified))
+            return purified
+        except Exception as e:
+            logger.warning("Decohere purifier failed for tool %s: %s", tool_name, e)
+            return None
+
     # ── Status ─────────────────────────────────────────────────────────
 
     def get_status(self) -> dict[str, object]:
@@ -556,7 +577,10 @@ def _strip_ledger_sections(
                 content = content[:m.start()].strip()
                 break
 
-        msg["content"] = content
+        if not content:
+            msg["content"] = "[SYSTEM_ERROR: Your previous response consisted entirely of regurgitated internal ledger context, which is strictly forbidden. The system has intercepted and removed it to prevent infinite feedback loops. Please formulate a new response that actually executes the requested task or directly answers the user, without repeating the memory context.]"
+        else:
+            msg["content"] = content
 
 
 def _extract_turn_numbers(messages: list[dict[str, Any]]) -> list[int]:

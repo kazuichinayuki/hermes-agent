@@ -187,6 +187,37 @@ def build_hint_context(
                     procs_seen.add(key)
                     procedures.append(f"• {proc}")
 
+    # Insights: Tree ToC
+    insight_toc_lines: list[str] = []
+    toc_cats: dict[str, list[str]] = {}
+    for t in recent:
+        for i in t.get("insights_and_learnings", []) or []:
+            if isinstance(i, dict):
+                cat = _sanitize_str(i.get("category", "General"))
+                title = _sanitize_str(i.get("title", "Observation"))
+                if title not in toc_cats.get(cat, []):
+                    toc_cats.setdefault(cat, []).append(title)
+    
+    for cat, titles in toc_cats.items():
+        insight_toc_lines.append(f"  [{cat}]")
+        for title in titles[-5:]:  # show up to 5 latest titles per category
+            insight_toc_lines.append(f"    • {title}")
+
+    # Execution Blockers
+    blockers: list[str] = []
+    blocker_seen: set[str] = set()
+    for t in recent:
+        cr = t.get("critical_reflection", {}) or {}
+        for b in cr.get("execution_blockers", []) or []:
+            if isinstance(b, dict):
+                cat = _sanitize_str(b.get('category', 'General'))
+                title = _sanitize_str(b.get('title', 'Observation'))
+                content = _sanitize_str(b.get('content', ''))
+                key = f"[{cat}] {title}"
+                if key not in blocker_seen:
+                    blocker_seen.add(key)
+                    blockers.append(f"• {key}: {content}")
+
     # Narrative: last 3 turn summaries for arc continuity
     arc_lines: list[str] = []
     for t in recent[-3:]:
@@ -234,6 +265,14 @@ def build_hint_context(
     if procedures:
         sections.append("Active procedures:")
         sections.extend(procedures[-5:])  # cap at 5
+
+    if blockers:
+        sections.append("Active Execution Blockers:")
+        sections.extend(blockers[-5:])
+
+    if insight_toc_lines:
+        sections.append("Memory Tree (Insights & Learnings):")
+        sections.extend(insight_toc_lines)
 
     if arc_lines:
         sections.append("Recent arc:")

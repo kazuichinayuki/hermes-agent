@@ -58,7 +58,7 @@ def validate_entry(raw: dict[str, object]) -> dict[str, object]:
         raw.get("decisions_and_rationale", ()) or ()
     )
     repaired["procedures"] = tuple(raw.get("procedures", ()) or ())
-    repaired["insights_and_learnings"] = _flatten_insights(
+    repaired["insights_and_learnings"] = _parse_categorized_nodes(
         raw.get("insights_and_learnings", ())
     )
 
@@ -66,31 +66,33 @@ def validate_entry(raw: dict[str, object]) -> dict[str, object]:
     repaired["critical_reflection"] = {
         "ignored_perspectives": tuple(cr.get("ignored_perspectives", ()) or ()),
         "logical_gaps": tuple(cr.get("logical_gaps", ()) or ()),
+        "tool_failures": tuple(cr.get("tool_failures", ()) or ()),
+        "execution_blockers": _parse_categorized_nodes(cr.get("execution_blockers", ())),
         "improvement_directions": tuple(cr.get("improvement_directions", ()) or ()),
     }
 
     return repaired
 
 
-def _flatten_insights(raw: object) -> tuple[str, ...]:
-    """If model produced object array, flatten to string tuple."""
+def _parse_categorized_nodes(raw: object) -> tuple[dict[str, str], ...]:
+    """Ensure nodes follow the category/title/content schema."""
     if not raw:
         return ()
     if not isinstance(raw, (list, tuple)):
-        return (str(raw),)
+        return ({"category": "General", "title": "Insight", "content": str(raw)},)
 
     result: list = []
     for item in raw:
         if isinstance(item, str):
-            result.append(item)
+            result.append({"category": "General", "title": "Insight", "content": item})
         elif isinstance(item, dict):
-            parts = []
-            for key in ("insight", "learning", "observation", "takeaway"):
-                val = item.get(key, "")
-                if val:
-                    parts.append(str(val))
-            if parts:
-                result.append(": ".join(parts))
+            content = str(item.get("content") or item.get("insight") or item.get("learning") or item.get("takeaway") or "")
+            if content:
+                result.append({
+                    "category": str(item.get("category") or "General"),
+                    "title": str(item.get("title") or "Observation"),
+                    "content": content
+                })
     return tuple(result)
 
 

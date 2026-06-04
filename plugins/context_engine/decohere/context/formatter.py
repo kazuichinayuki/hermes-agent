@@ -87,6 +87,11 @@ def format_proc_layer(turn: dict[str, object]) -> str:
         for i in insights:
             if isinstance(i, str):
                 lines.append(f"  • {_sanitize_str(i)}")
+            elif isinstance(i, dict):
+                cat = _sanitize_str(i.get('category', 'General'))
+                title = _sanitize_str(i.get('title', 'Observation'))
+                content = _sanitize_str(i.get('content', ''))
+                lines.append(f"  • [{cat}] {title}: {content}")
 
     # User intent
     intent = turn.get("user_intent", "")
@@ -95,6 +100,19 @@ def format_proc_layer(turn: dict[str, object]) -> str:
 
     # Critical reflection
     cr = turn.get("critical_reflection", {}) or {}
+    
+    blockers = cr.get("execution_blockers", []) or []
+    if blockers:
+        lines.append("\nexecution_blockers:")
+        for b in blockers:
+            if isinstance(b, str):
+                lines.append(f"  • {_sanitize_str(b)}")
+            elif isinstance(b, dict):
+                cat = _sanitize_str(b.get('category', 'General'))
+                title = _sanitize_str(b.get('title', 'Observation'))
+                content = _sanitize_str(b.get('content', ''))
+                lines.append(f"  • [{cat}] {title}: {content}")
+
     if cr.get("improvement_directions"):
         lines.append("\n↳ improvements:")
         for d in cr["improvement_directions"]:
