@@ -43,11 +43,6 @@ class Decohere(ContextEngine):
     """
 
     name = "decohere"
-    # Declares this engine as a context INJECTOR, not a token REDUCER.
-    # compress_context() checks this to skip session rotation + status
-    # messages.  Without it, Decohere's shorter return list triggers
-    # session rotation → state reset → infinite loop.
-    _is_context_injector = True
 
     # ── Token state (read by run_agent.py) ──
     last_prompt_tokens: int = 0
@@ -66,6 +61,8 @@ class Decohere(ContextEngine):
     threshold_percent: float = 1.0
     protect_first_n: int = 0
     protect_last_n: int = 0
+    format_version: int = 2
+    can_reduce_tokens: bool = False
 
     def __init__(self, context_length: int = 200_000):
         self.context_length = context_length
@@ -148,45 +145,11 @@ class Decohere(ContextEngine):
 
     # ── Context management ─────────────────────────────────────────────
 
-    def should_compress(self, prompt_tokens: int = None) -> bool:
-        """Return True only when Decohere has new ledger data to inject.
-
-        CRITICAL CONTRACT: The built-in conversation loop calls this in a
-        tight retry loop.  It MUST return False once Decohere has done its
-        work for the current state, otherwise the loop never exits.
-
-        Decohere is NOT a token-reducing compressor.  It returns True only
-        when it has new structured context to inject from the ledger:
-          • First call of the session (needs initial Phase 1 + context)
-          • New turns posted to the ledger since last compress()
-
-        Phase 1 extraction (saving the current turn to the ledger) happens
-        inside compress() as a side effect.  It is gated by the user_hash
-        check and does NOT need should_compress() to trigger it — the
-        extraction simply runs whenever compress() is called for any reason.
-        """
-        if self._io is None:
+    def should_compress(self, tokens: int = None) -> bool:
+        """Return True only when tokens exceed the threshold."""
+        if tokens is None:
             return False
-        if not self._io.is_v2():
-            return False
-        # First call of session — only if there's ledger data to inject
-        # (resumed session) or enough messages to extract from.  Without
-        # this check, compress() fires on the very first user message
-        # when the ledger is empty — a wasted cycle.
-        if not getattr(self, '_initial_compress_done', False):
-            try:
-                if self._io.turn_count() > 0:
-                    return True  # resumed session — inject existing context
-            except Exception:
-                pass
-            return False  # fresh session, no data yet — wait for real turns
-        # New turns posted by background extraction tasks
-        try:
-            return self._io.turn_count() > self._last_compressed_turns
-        except Exception:
-            # Connection was closed (e.g. session rotation) — disable
-            self._io = None
-            return False
+        return tokens >= self.threshold_tokens
 
     def compress(
         self,
@@ -194,36 +157,29 @@ class Decohere(ContextEngine):
         current_tokens: int = None,
         focus_topic: str = None,
     ) -> list[dict[str, Any]]:
-        """Main entry point. Called BEFORE each LLM turn.
+        # Decohere no longer acts as a token compressor.
+        # It relies on conversation_loop.py intercepting the LLM turn.
+        return messages
 
-        Phase 1: extract last turn → placeholder → async posting
-        Phase 2: read existing specs → build L1+L2 → return
-        """
+    def extract_knowledge_async(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Phase 1: extract last turn → placeholder → async posting."""
         sid = self._session_id
         if not sid or not self._io:
-            return messages
+            return
 
-        # Filter out any None messages (can happen after session splits)
         messages = [m for m in messages if m is not None]
 
-        # ── Strip ledger context from message history ──
-        # 1. Remove named ledger messages (injected by builder on previous turns)
         _LEDGER_NAMES = frozenset({
             "ledger_l1", "turn_context", "turn_index",
             "shared_state", "shared_knowledge",
         })
         real_msgs = [m for m in messages if m.get("name") not in _LEDGER_NAMES]
-        # 2. Strip regurgitated ledger content from assistant responses
         _strip_ledger_sections(real_msgs, canary_token=self._canary_token)
 
         turn_msgs = last_turn_messages(real_msgs)
-
-        # ── Phase 1: post-turn processing ──
-        # Guard against re-entry during tool-call loops.
-        # compress() is called before EACH LLM invocation — including
-        # mid-turn iterations after tool calls.  Without this guard,
-        # each iteration creates a duplicate placeholder + posting task,
-        # inflating turn_count and duplicating raw messages.
         user_content = _extract_user_content(turn_msgs)
         user_hash = hash(user_content) if user_content else None
 
@@ -231,12 +187,6 @@ class Decohere(ContextEngine):
             self._current_turn_user_hash = user_hash
 
             should_skip = should_skip_entry(turn_msgs)
-            # ── Gutted-turn detection ──
-            # When the LLM regurgitates ledger context as its response,
-            # _strip_ledger_sections removes it, leaving near-empty
-            # assistant messages.  These turns contributed nothing and
-            # must NOT be extracted — otherwise the extraction model
-            # sees the surrounding context and creates phantom entries.
             if not should_skip:
                 if _is_gutted_turn(turn_msgs):
                     should_skip = True
@@ -256,28 +206,32 @@ class Decohere(ContextEngine):
             if not should_skip:
                 self._tasks.schedule(sid, turn_msgs, self._io, self._metrics)
 
-        # ── Context building: only replace history if there are NEW turns to inject ──
-        self._initial_compress_done = True  # prevent should_compress() re-trigger
-        current_turns = self._io.turn_count()
-        if current_turns <= self._last_compressed_turns:
+    def build_context_payload(
+        self,
+        messages: list[dict[str, Any]],
+        focus_topic: str = None,
+    ) -> list[dict[str, Any]]:
+        """Phase 2: read existing specs → build L1+L2 → return payload"""
+        if not self._session_id or not self._io:
             return messages
 
+        _LEDGER_NAMES = frozenset({
+            "ledger_l1", "turn_context", "turn_index",
+            "shared_state", "shared_knowledge",
+        })
+
+        self._initial_compress_done = True
+        
+        current_turns = self._io.turn_count()
         self._last_compressed_turns = current_turns
         turns = self._io.get_turns()
         readiness = check_readiness(turns, self._io.turn_count())
 
         if readiness.state == "legacy":
-            self._health.snapshot_compress(readiness, len(messages))
             return build_raw_context(messages)
         if readiness.state == "empty":
-            self._health.snapshot_compress(readiness, 0)
-            return []
+            return messages
 
-        # ── Minimal hint injection (replaces full L1+L2 blocks) ──
-        # Instead of injecting full structured ledger entries (which the
-        # LLM regurgitates), inject a single compact hint message with
-        # turn count + one-line summaries.  The LLM uses recall_context
-        # tool for detailed history on demand.
         result = build_hint_context(
             list(readiness.turns),
             self._cfg.max_turns,
@@ -293,7 +247,7 @@ class Decohere(ContextEngine):
         self._health.snapshot_compress(
             readiness, len(messages), turn_numbers=tuple(included_turns),
         )
-        # ── Shared knowledge injection ──
+
         if self._shared_store and self._user_config:
             focus = focus_topic or _extract_intent_from_messages(messages)
             injection_msg = build_injection_message(
@@ -307,23 +261,22 @@ class Decohere(ContextEngine):
             )
             if injection_msg:
                 result = list(result) + [injection_msg]
-        # ── Session state injection (L2 working memory) ──
+
         if self._io:
             state_block = self._io._state.format_for_context()
             if state_block:
                 result = list(result) + [
                     {"role": "system", "name": "shared_state", "content": state_block}
                 ]
-        # ── Phase 2A: Annotate decohere-injected messages ──
-        # Mark all messages returned by decohere so downstream cache
-        # marker logic (prompt_caching.py) can skip them and place
-        # cache breakpoints on real conversation messages instead.
+
         for msg in result:
             if msg.get("name") in _LEDGER_NAMES or msg.get("name") == "shared_knowledge":
                 msg["_decohere_injected"] = True
-        self.compression_count += 1
 
-        return result
+        self.compression_count += 1
+        
+        # Prepend the injected context to the original messages
+        return result + messages
 
     # ── Tool-mediated retrieval (Phase 3) ──────────────────────────────
 

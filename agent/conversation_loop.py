@@ -764,7 +764,7 @@ def run_conversation(
             # context windows (each pass summarises the middle N turns).
             # Injectors can't reduce tokens — use emergency compressor
             _emg = None
-            if getattr(agent.context_compressor, '_is_context_injector', False):
+            if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
                 from agent.conversation_compression import _get_emergency_compressor
                 _emg = _get_emergency_compressor(agent)
             for _pass in range(3):
@@ -1109,6 +1109,12 @@ def run_conversation(
                             break
             except Exception as _moa_exc:
                 logger.warning("MoA context aggregation failed: %s", _moa_exc)
+
+
+        # Decohere Phase 2: Inject knowledge context into the payload
+        _compressor = getattr(agent, "context_compressor", None)
+        if _compressor and getattr(_compressor, "name", "") == "decohere" and hasattr(_compressor, "build_context_payload"):
+            api_messages = _compressor.build_context_payload(api_messages)
 
         # Inject ephemeral prefill messages right after the system prompt
         # but before conversation history. Same API-call-time-only pattern.
@@ -3352,7 +3358,7 @@ def run_conversation(
                         original_len = len(messages)
                         # Injectors can't reduce tokens — use emergency compressor
                         _emg = None
-                        if getattr(agent.context_compressor, '_is_context_injector', False):
+                        if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
                             from agent.conversation_compression import _get_emergency_compressor
                             _emg = _get_emergency_compressor(agent)
                         messages, active_system_prompt = agent._compress_context(
@@ -3613,7 +3619,7 @@ def run_conversation(
                     original_tokens = estimate_messages_tokens_rough(messages)
                     # Injectors can't reduce tokens — use emergency compressor
                     _emg = None
-                    if getattr(agent.context_compressor, '_is_context_injector', False):
+                    if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
                         from agent.conversation_compression import _get_emergency_compressor
                         _emg = _get_emergency_compressor(agent)
                     messages, active_system_prompt = agent._compress_context(
@@ -3842,7 +3848,7 @@ def run_conversation(
                     original_tokens = estimate_messages_tokens_rough(messages)
                     # Injectors can't reduce tokens — use emergency compressor
                     _emg = None
-                    if getattr(agent.context_compressor, '_is_context_injector', False):
+                    if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
                         from agent.conversation_compression import _get_emergency_compressor
                         _emg = _get_emergency_compressor(agent)
                     messages, active_system_prompt = agent._compress_context(
@@ -5036,11 +5042,17 @@ def run_conversation(
                             pass
                     else:
                         # Real token-pressure compressor: full machinery
+                        _emg = None
+                        if not getattr(_compressor, 'can_reduce_tokens', True):
+                            from agent.conversation_compression import _get_emergency_compressor
+                            _emg = _get_emergency_compressor(agent)
+                            
                         agent._safe_print("  ⟳ compacting context…")
                         messages, active_system_prompt = agent._compress_context(
                             messages, system_message,
                             approx_tokens=agent.context_compressor.last_prompt_tokens,
                             task_id=effective_task_id,
+                            compressor_override=_emg,
                         )
                         conversation_history = conversation_history_after_compression(
                             agent, messages
@@ -5556,6 +5568,15 @@ def run_conversation(
                 messages.append({"role": "assistant", "content": final_response})
                 break
     
+
+    # Decohere Phase 1: Async Knowledge Extraction
+    _compressor = getattr(agent, "context_compressor", None)
+    if _compressor and getattr(_compressor, "name", "") == "decohere" and hasattr(_compressor, "extract_knowledge_async"):
+        try:
+            _compressor.extract_knowledge_async(messages)
+        except Exception as _dec_exc:
+            logger.warning("Decohere async extraction failed: %s", _dec_exc)
+
     # Post-loop turn finalization extracted to agent/turn_finalizer.finalize_turn
     # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
     # result dict is returned exactly as before.

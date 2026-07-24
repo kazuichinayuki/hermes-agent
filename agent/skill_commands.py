@@ -136,10 +136,19 @@ def _resolve_skill_commands_platform() -> Optional[str]:
     return resolved_platform or None
 
 def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tuple[dict[str, Any], Path | None, str] | None:
-    """Load a skill by name/path and return (loaded_payload, skill_dir, display_name)."""
+    """Load a skill by name/path and return (loaded_payload, skill_dir, display_name).
+
+    When *skill_identifier* is an absolute path inside a trusted skills dir
+    (skip-dirs/SKILLS_DIR or an external dir), a name collision in skill_view
+    cannot be resolved by name alone — we already know the exact SKILL.md from
+    the scan.  This function falls back to reading the file directly to avoid
+    ambiguity errors when two skills share the same frontmatter ``name:``.
+    """
     raw_identifier = (skill_identifier or "").strip()
     if not raw_identifier:
         return None
+
+    loaded_skill: dict[str, Any] | None = None
 
     try:
         from tools.skills_tool import SKILLS_DIR, skill_view
@@ -151,12 +160,50 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
             skill_view(normalized, task_id=task_id, preprocess=False)
         )
     except Exception:
+        loaded_skill = None
+
+    # ── Fallback: direct read when name-based lookup hits a collision ──
+    # scan_skill_commands stores the absolute skill_dir so downstream
+    # builders (build_skill_invocation_message, etc.) can load the skill
+    # even when two SKILL.md files share the same frontmatter ``name:``.
+    # skill_view() refuses to guess in that case, returning
+    # ``success: false`` with a collision error.  When we have an absolute
+    # path from the scan we can bypass the name search entirely and parse
+    # the SKILL.md directly.
+    if not loaded_skill or not loaded_skill.get("success"):
+        identifier_path = Path(raw_identifier).expanduser()
+        if identifier_path.is_absolute():
+            # If given a directory, look for <dir>/SKILL.md;
+            # if given a .md file, use it directly.
+            skill_md: Path | None = None
+            if identifier_path.is_dir():
+                candidate = identifier_path / "SKILL.md"
+                if candidate.exists():
+                    skill_md = candidate
+            elif identifier_path.suffix == ".md" and identifier_path.exists():
+                skill_md = identifier_path
+
+            if skill_md is not None:
+                try:
+                    from tools.skills_tool import SKILLS_DIR as _SKILLS_DIR_FALLBACK, _parse_frontmatter
+                    content = skill_md.read_text(encoding="utf-8")
+                    frontmatter, body = _parse_frontmatter(content)
+                    skill_name = frontmatter.get("name") or (identifier_path.name if identifier_path.is_dir() else identifier_path.stem)
+                    loaded_skill = {
+                        "success": True,
+                        "name": skill_name,
+                        "content": body,
+                        "raw_content": content,
+                        "skill_dir": str(skill_md.parent),
+                        "path": str(skill_md.relative_to(_SKILLS_DIR_FALLBACK)) if skill_md.is_relative_to(_SKILLS_DIR_FALLBACK) else str(skill_md),
+                    }
+                except Exception:
+                    loaded_skill = None
+
+    if not isinstance(loaded_skill, dict) or not loaded_skill.get("success"):
         return None
 
-    if not loaded_skill.get("success"):
-        return None
-
-    skill_name = str(loaded_skill.get("name") or normalized)
+    skill_name = str(loaded_skill.get("name") or "")
     skill_path = str(loaded_skill.get("path") or "")
     skill_dir = None
     # Prefer the absolute skill_dir returned by skill_view() — this is
