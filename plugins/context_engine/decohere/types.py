@@ -57,6 +57,14 @@ class Outcome(Enum):
     ERROR = "error"
 
 
+class BudgetTier(Enum):
+    """Memory budget tiers for query-aware dynamic allocation."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 @dataclass(frozen=True)
 class EntryResult:
     """Outcome of async entry posting.

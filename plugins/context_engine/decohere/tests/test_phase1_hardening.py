@@ -235,9 +235,9 @@ class TestMidTurnReentry:
         ]
 
         # First call — should create placeholder
-        d.compress(list(messages))
+        d.extract_knowledge_async(list(messages))
         assert d._io.save_turn.call_count == 1
 
         # Second call — same user content → should skip Phase 1
-        d.compress(list(messages))
+        d.extract_knowledge_async(list(messages))
         assert d._io.save_turn.call_count == 1  # NOT 2

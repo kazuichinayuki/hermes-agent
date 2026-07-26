@@ -14,6 +14,7 @@ from .formatter import (
     _sanitize_str,
 )
 from ..core.indexer import build_turn_index, pick_turns_from_index
+from .query_focused import build_query_focused_context
 
 _MARKER_START = "<!-- DECOHERE:BEGIN -->"
 _MARKER_END = "<!-- DECOHERE:END -->"

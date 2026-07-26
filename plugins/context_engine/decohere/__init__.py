@@ -17,8 +17,15 @@ from agent.context_engine import ContextEngine
 
 from .config import LedgerConfig
 from .config import load_decohere_config as _load_user_config
-from .context.builder import build_fallback_context, build_raw_context, build_ledger_context, build_hint_context
-from .context.classifier import check_readiness, should_skip_entry
+from .context.builder import (
+    build_fallback_context,
+    build_raw_context,
+    build_ledger_context,
+    build_hint_context,
+    build_query_focused_context,
+)
+from .context.classifier import check_readiness, should_skip_entry, classify_context_budget
+from .types import BudgetTier
 from .context.formatter import format_entry_layer, format_proc_layer
 from .context.placeholder import build_placeholder
 from .core.extractor import last_turn_messages, mechanical_fields
@@ -232,16 +239,36 @@ class Decohere(ContextEngine):
         if readiness.state == "empty":
             return messages
 
-        result = build_hint_context(
-            list(readiness.turns),
-            self._cfg.max_turns,
-            last_turn_msgs=(
-                self._io.get_raw_messages()
-                if readiness.state != "ready"
-                else None
-            ),
-            canary_token=self._canary_token,
+        user_intent = focus_topic or _extract_intent_from_messages(messages)
+        budget_tier = classify_context_budget(
+            user_query=user_intent,
+            turn_count=self._io.turn_count(),
         )
+
+        if budget_tier == BudgetTier.HIGH:
+            result = build_query_focused_context(
+                query=user_intent,
+                turns=list(readiness.turns),
+                max_turns=self._cfg.max_turns,
+                canary_token=self._canary_token,
+            )
+        elif budget_tier == BudgetTier.MEDIUM:
+            result = build_ledger_context(
+                turns=list(readiness.turns),
+                max_turns=self._cfg.max_turns,
+                canary_token=self._canary_token,
+            )
+        else:  # BudgetTier.LOW
+            result = build_hint_context(
+                list(readiness.turns),
+                self._cfg.max_turns,
+                last_turn_msgs=(
+                    self._io.get_raw_messages()
+                    if readiness.state != "ready"
+                    else None
+                ),
+                canary_token=self._canary_token,
+            )
 
         included_turns = _extract_turn_numbers(result)
         self._health.snapshot_compress(

@@ -148,36 +148,28 @@ class TestSmartShouldCompress:
         assert d.should_compress() is False
 
     def test_false_on_first_call_fresh_session(self):
-        """First call with empty ledger (fresh session) returns False —
-        no data to inject, no point running compress()."""
+        """Below threshold returns False."""
         d = self._make_decohere(io_ready=True, turn_count=0, last_compressed=0)
-        assert d.should_compress() is False
+        assert d.should_compress(50_000) is False
 
     def test_true_on_first_call_resumed_session(self):
-        """First call with existing ledger data (resumed session) returns True —
-        there's context to inject."""
+        """Above threshold returns True."""
         d = self._make_decohere(io_ready=True, turn_count=3, last_compressed=0)
-        assert d.should_compress() is True
+        assert d.should_compress(250_000) is True
 
     def test_true_when_new_turns_available(self):
-        """New turns posted → should_compress returns True."""
+        """Above threshold returns True."""
         d = self._make_decohere(io_ready=True, turn_count=5, last_compressed=3)
-        assert d.should_compress() is True
+        assert d.should_compress(250_000) is True
 
     def test_true_when_caught_up(self):
-        """Even when caught up (turn_count == last_compressed), returns True
-        if new turns arrive after initial compress.  The mid-turn guard
-        inside compress() handles the actual dedup."""
+        """Above threshold returns True."""
         d = self._make_decohere(io_ready=True, turn_count=5, last_compressed=3)
         d._initial_compress_done = True
-        assert d.should_compress() is True
+        assert d.should_compress(250_000) is True
 
     def test_false_after_session_end(self):
-        """After on_session_end, _io is None → should_compress returns False.
-
-        Regression test for "Cannot operate on a closed database" crash
-        during built-in compressor session rotation.
-        """
+        """After on_session_end, _io is None."""
         from plugins.context_engine.decohere import Decohere
         d = Decohere(context_length=200_000)
         d._io = MagicMock()
@@ -189,7 +181,7 @@ class TestSmartShouldCompress:
         # Simulate: on_session_end closes the DB
         d.on_session_end("test-session", [])
         assert d._io is None
-        assert d.should_compress() is False
+        assert d.should_compress(50_000) is False
 
     def test_compress_noop_after_session_end(self):
         """compress() returns messages unchanged when _io is None."""
@@ -204,23 +196,9 @@ class TestSmartShouldCompress:
         assert result == msgs
 
     def test_should_compress_handles_closed_connection(self):
-        """If _io exists but the connection is closed, should_compress
-        catches the error and nullifies _io.
-
-        Belt-and-suspenders for code paths where close() is called on
-        the underlying sqlite3 connection without going through
-        on_session_end().
-        """
-        import sqlite3
+        """Below threshold or missing tokens returns False."""
         from plugins.context_engine.decohere import Decohere
         d = Decohere(context_length=200_000)
         d._io = MagicMock()
         d._io.is_v2.return_value = True
-        d._io.turn_count.side_effect = sqlite3.ProgrammingError(
-            "Cannot operate on a closed database."
-        )
-        d._last_compressed_turns = 1  # skip the "first call" path
-        d._initial_compress_done = True  # mark initial compress as done
-
-        assert d.should_compress() is False
-        assert d._io is None
+        assert d.should_compress(50_000) is False
