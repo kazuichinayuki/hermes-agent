@@ -59,7 +59,7 @@ gemini = GeminiProfile(
     # Point it at the OpenAI-compatible surface which accepts Bearer.
     models_url="https://generativelanguage.googleapis.com/v1beta/openai/models",
     auth_type="api_key",
-    default_aux_model="gemini-3.5-flash",
+    default_aux_model="gemini-3.6-flash",
 )
 
 register_provider(gemini)
