@@ -1738,21 +1738,22 @@ def compress_context(
                 _release_lock()
                 return messages, _existing_sp
 
-    try:
-        _old_sid = locals().get("old_session_id")
-        if _old_sid and hasattr(agent.context_compressor, "on_session_start"):
-            from hermes_constants import get_hermes_home
-            agent.context_compressor.on_session_start(
-                agent.session_id or "",
-                boundary_reason="compression",
-                old_session_id=_old_sid,
-                hermes_home=str(get_hermes_home()),
-                thread_id=getattr(agent, "thread_id", None) or "",
-                chat_id=getattr(agent, "chat_id", None) or "",
-                conversation_id=getattr(agent, "_gateway_session_key", None),
-            )
-    except Exception:
-        pass
+        try:
+            _old_sid = locals().get("old_session_id")
+            if _old_sid and hasattr(agent.context_compressor, "on_session_start"):
+                from hermes_constants import get_hermes_home
+                agent.context_compressor.on_session_start(
+                    agent.session_id or "",
+                    boundary_reason="compression",
+                    old_session_id=_old_sid,
+                    hermes_home=str(get_hermes_home()),
+                    thread_id=getattr(agent, "thread_id", None) or "",
+                    chat_id=getattr(agent, "chat_id", None) or "",
+                    conversation_id=getattr(agent, "_gateway_session_key", None),
+                )
+        except Exception:
+            pass
+
         summary_error = getattr(agent.context_compressor, "_last_summary_error", None)
         if summary_error:
             if getattr(agent, "_last_compression_summary_warning", None) != summary_error:

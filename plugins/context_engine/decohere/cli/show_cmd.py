@@ -103,6 +103,10 @@ def _print_entry(entry: dict, row: tuple, layer: str) -> None:
     if layer == "full":
         _print_reflection(entry)
 
+    if not row[3] and not (entry.get("narrative") or {}).get("summary"):
+        print("\n  ℹ Status: Pending background extraction (placeholder created).")
+        print("  Raw messages are saved in session. Use `hermes decohere messages` or `--json` to view.")
+
 
 def _print_l1(entry: dict) -> None:
     """Print L1 reference layer."""

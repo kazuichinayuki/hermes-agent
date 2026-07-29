@@ -730,6 +730,8 @@ class DecohereCLI:
         narrative = entry.get("narrative") or {}
         if narrative.get("summary"):
             self.print(f"  narrative: {narrative.get('summary')}")
+        if not validated and not narrative.get("summary"):
+            self.print("  [Pending background extraction — placeholder entry]", "dim")
 
     # ── Public data accessors (for vim TUI) ───────────────────────────
 
