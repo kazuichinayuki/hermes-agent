@@ -89,12 +89,18 @@ class LedgerStore:
     def save_turn(self, turn: dict[str, object]) -> None:
         """Insert or replace a ledger entry. Indexes concepts in FTS5."""
         turn_n = turn.get("n")
-        is_new = False
         if turn_n is None:
             cur = self._conn.execute("SELECT COALESCE(MAX(turn_n), 0) + 1 FROM ledger_entries")
             turn_n = cur.fetchone()[0]
             turn["n"] = turn_n
-            is_new = True
+        else:
+            cur = self._conn.execute("SELECT entry_json FROM ledger_entries WHERE turn_n = ?", (turn_n,))
+            row = cur.fetchone()
+            if row:
+                existing = parse_json_field(row[0], {})
+                for key in ("message_range", "tools", "files_touched", "n"):
+                    if key in existing and key not in turn:
+                        turn[key] = existing[key]
             
         entry_json_blob = json.dumps(turn, ensure_ascii=False)
 

@@ -71,6 +71,11 @@ def validate_entry(raw: dict[str, object]) -> dict[str, object]:
         "improvement_directions": tuple(cr.get("improvement_directions", ()) or ()),
     }
 
+    # Preserve metadata fields
+    for meta_key in ("n", "message_range", "tools", "files_touched", "entry_skipped", "validated"):
+        if meta_key in raw and raw[meta_key] is not None:
+            repaired[meta_key] = raw[meta_key]
+
     return repaired
 
 
