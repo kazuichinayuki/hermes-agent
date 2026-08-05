@@ -6813,6 +6813,7 @@ class AIAgent:
         reduce tokens.  A temporary built-in ContextCompressor is created
         via ``_get_emergency_compressor()`` and passed here.
         """
+        from agent.conversation_compression import compress_context
         from agent.portal_tags import (
             get_conversation_context,
             reset_conversation_context,
