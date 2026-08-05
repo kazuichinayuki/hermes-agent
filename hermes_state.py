@@ -6435,25 +6435,56 @@ class SessionDB:
 
     # Columns excluded from compact_rows projections: only the payload-heavy
     # blob no list consumer renders. Everything else — including gateway
-    # routing fields and desktop sidebar fields like git_branch — stays, and
-    # the projection is derived from SCHEMA_SQL so columns added later via
-    # declarative reconciliation are included automatically instead of
-    # silently dropping out of list rows.
-    _SESSION_COMPACT_EXCLUDED = frozenset({"system_prompt"})
-    _session_compact_cols_sql: Optional[str] = None
+    # routing fields and desktop sidebar fields like git_branch — stays, and                                                   
+    # the projection is derived from SCHEMA_SQL intersected with live columns                                                
+    # so columns added later via declarative reconciliation are included                                                     
+    # automatically, but a read_only connection against an unreconciled DB                                                   
+    # (e.g. cross-profile attach) never selects columns that don't exist yet.                                                
+    _SESSION_COMPACT_EXCLUDED = frozenset({"system_prompt"})                                                                 
+    _session_compact_cols_sql: Optional[str] = None                                                                          
 
-    @classmethod
-    def _compact_session_cols(cls) -> str:
-        """SELECT list for compact_rows: every ``sessions`` column declared in
-        SCHEMA_SQL except the ``system_prompt`` blob, aliased with the ``s``
-        prefix used by list_sessions_rich/_get_session_rich_row queries."""
-        if cls._session_compact_cols_sql is None:
-            declared = cls._parse_schema_columns(SCHEMA_SQL)["sessions"]
-            cls._session_compact_cols_sql = ", ".join(
-                f"s.{name}" for name in declared
-                if name not in cls._SESSION_COMPACT_EXCLUDED
-            )
-        return cls._session_compact_cols_sql
+    def _compact_session_cols(self) -> str:                                                                                  
+        """SELECT list for compact_rows: every ``sessions`` column declared in                                               
+        SCHEMA_SQL that ACTUALLY EXISTS in the live DB, except the                                                           
+        ``system_prompt`` blob, aliased with the ``s`` prefix used by                                                        
+        list_sessions_rich/_get_session_rich_row queries.                                                                     
+
+        Caching is per-connection (instance-level, not class-level) so that                                                  
+        read_only connections probing a pre-reconciliation DB won't re-use                                                   
+        columns that only exist in SCHEMA_SQL but not yet in the live table.                                                 
+
+        On read-write connections _init_schema has already reconciled the                                                    
+        columns by the time this is called, so the cache reflects the full                                                   
+        declared schema.                                                                                                     
+        """                                                                                                                  
+        # Cache lives on the instance so read_only / read_write connections                                                  
+        # don't share a class-level global that might be stale or optimistic.                                                
+        if not hasattr(self, '_session_compact_cols_sql'):                                                                    
+            self._session_compact_cols_sql = None                                                                             
+        if self._session_compact_cols_sql is not None:                                                                        
+            return self._session_compact_cols_sql                                                                             
+
+        declared = self._parse_schema_columns(SCHEMA_SQL)["sessions"]                                                        
+        # Intersect with what the live DB actually knows about — critical                                                    
+        # for read_only connections where _init_schema (and thus                                                              
+        # _reconcile_columns) never ran.                                                                                     
+        try:                                                                                                                 
+            live_rows = self._conn.execute(                                                                                  
+                'PRAGMA table_info("sessions")'                                                                              
+            ).fetchall()                                                                                                     
+            live_cols = {                                                                                                    
+                row[1] if isinstance(row, (tuple, list)) else row["name"]                                                    
+                for row in live_rows                                                                                         
+            }                                                                                                                
+            safe = [c for c in declared                                                                                      
+                    if c in live_cols and c not in self._SESSION_COMPACT_EXCLUDED]                                           
+        except (sqlite3.OperationalError, AttributeError):                                                                    
+            # _conn may not exist yet during early init paths; fall back                                                     
+            # to declared columns (assume schema is up to date).                                                             
+            safe = [c for c in declared if c not in self._SESSION_COMPACT_EXCLUDED]                                          
+
+        self._session_compact_cols_sql = ", ".join(f"s.{name}" for name in safe)                                             
+        return self._session_compact_cols_sql
 
     def distinct_session_cwds(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """Distinct non-empty session cwds with usage stats, for repo discovery.
