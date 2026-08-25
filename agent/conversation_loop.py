@@ -5634,13 +5634,13 @@ def run_conversation(
                     compression_attempts += 1
                     if compression_attempts <= max_compression_attempts:
                         original_len = len(messages)
-# Option A (LCM issue 441): overhead-aware request size so recovery arms on
+                        # Option A (LCM issue 441): overhead-aware request size so recovery arms on
                         # the true request (msgs + tools + system), not the tool-blind message count.
-# Injectors can't reduce tokens — use emergency compressor
-_emg = None
-if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
-    from agent.conversation_compression import _get_emergency_compressor
-    _emg = _get_emergency_compressor(agent)
+                        # Injectors can't reduce tokens — use emergency compressor
+                        _emg = None
+                        if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
+                            from agent.conversation_compression import _get_emergency_compressor
+                            _emg = _get_emergency_compressor(agent)
                         messages, active_system_prompt = agent._compress_context(
                             messages, system_message,
                             approx_tokens=estimate_request_tokens_rough(api_messages, tools=agent.tools or None),
@@ -5924,13 +5924,13 @@ if getattr(agent.context_compressor, '_is_context_injector', False) or not getat
                     original_len = len(messages)
                     original_tokens = estimate_messages_tokens_rough(messages)
                     _overflow_input = messages
-# Option A (LCM issue 441): overhead-aware request size so recovery arms on the
+                    # Option A (LCM issue 441): overhead-aware request size so recovery arms on the
                     # true request (msgs + tools + system), not the tool-blind message count.
-# Injectors can't reduce tokens — use emergency compressor
-_emg = None
-if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
-    from agent.conversation_compression import _get_emergency_compressor
-    _emg = _get_emergency_compressor(agent)
+                    # Injectors can't reduce tokens — use emergency compressor
+                    _emg = None
+                    if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
+                        from agent.conversation_compression import _get_emergency_compressor
+                        _emg = _get_emergency_compressor(agent)
                     messages, active_system_prompt = agent._compress_context(
                         messages, system_message,
                         approx_tokens=estimate_request_tokens_rough(api_messages, tools=agent.tools or None),
@@ -6234,15 +6234,15 @@ if getattr(agent.context_compressor, '_is_context_injector', False) or not getat
                     original_len = len(messages)
                     original_tokens = estimate_messages_tokens_rough(messages)
                     _overflow_input = messages
-# Option A (LCM issue 441): pass the OVERHEAD-AWARE request size (msgs + tool
+                    # Option A (LCM issue 441): pass the OVERHEAD-AWARE request size (msgs + tool
                     # schemas + system), not the tool-blind message count, so LCM forced-overflow
                     # recovery arms on the TRUE request that overflowed. See hermes-lcm engine
                     # _should_force_overflow_recovery. (approx_tokens stays for the status display.)
-# Injectors can't reduce tokens — use emergency compressor
-_emg = None
-if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
-    from agent.conversation_compression import _get_emergency_compressor
-    _emg = _get_emergency_compressor(agent)
+                    # Injectors can't reduce tokens — use emergency compressor
+                    _emg = None
+                    if getattr(agent.context_compressor, '_is_context_injector', False) or not getattr(agent.context_compressor, 'can_reduce_tokens', True):
+                        from agent.conversation_compression import _get_emergency_compressor
+                        _emg = _get_emergency_compressor(agent)
                     messages, active_system_prompt = agent._compress_context(
                         messages, system_message,
                         approx_tokens=estimate_request_tokens_rough(api_messages, tools=agent.tools or None),
