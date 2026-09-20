@@ -1382,8 +1382,19 @@ class TestPruneSessions:
             older_than_days=90, source="cron", archived=False
         )} == {"ended"}
 
-
-
+    def test_negative_older_than_days_rejected_at_every_prune_boundary(self, db):
+        """A negative bound builds a FUTURE cutoff that matches every ended session (and every
+        never-active keyed row) — the SessionDB API must raise, naming the allowed range, instead
+        of mass-deleting; ``sessions.retention_days: -1`` reaches these paths from config (#116361)."""
+        db.create_session(session_id="ended", source="cli")
+        db.end_session("ended", "done")
+        db.create_session(session_id="keyed", source="telegram", session_key="telegram:dm:1")
+        for call in (db.prune_sessions, db.list_prune_candidates, db.count_prune_matches,
+                     db.list_never_active_keyed_sessions, db.prune_never_active_keyed_sessions):
+            with pytest.raises(ValueError, match=">= 0"):
+                call(older_than_days=-1)
+        assert db.get_session("ended") is not None
+        assert db.get_session("keyed") is not None
 
 
 class TestPruneSessionFilters:
@@ -3902,11 +3913,6 @@ class TestAutoMaintenance:
         assert second["skipped"] is True
         assert second["pruned"] == 0
         assert db.get_session("old2") is not None  # untouched
-
-
-
-
-
 
     def test_auto_prune_deletes_transcript_files(self, db, tmp_path):
         """Issue #3015: auto-prune must also delete on-disk transcript files."""
