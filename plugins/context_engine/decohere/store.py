@@ -159,3 +159,154 @@ class LedgerStore:
         except sqlite3.OperationalError:
             return []
         return [{"turn_n": r[0], "term": r[1], "definition": r[2]} for r in rows]
+
+
+class TrajectoryStore:
+    """Storage for complete agent trajectories and compiled decision points.
+
+    Compiles runtime agent experience into SQLite tables for trajectory replay,
+    evaluation, and distillation into fast System 1 models (e.g. Laya).
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def save_trajectory(
+        self,
+        session_id: str,
+        turn_n: int,
+        model: str,
+        completed: bool,
+        trajectory: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        """Insert a complete trajectory record."""
+        cur = self._conn.execute(
+            """INSERT INTO trajectories (session_id, turn_n, model, completed, trajectory_json, metadata_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                session_id,
+                turn_n,
+                model or "",
+                1 if completed else 0,
+                json.dumps(trajectory, ensure_ascii=False),
+                json.dumps(metadata or {}, ensure_ascii=False),
+            ),
+        )
+        return cur.lastrowid or 0
+
+    def save_decision_points(
+        self,
+        session_id: str,
+        turn_n: int,
+        decision_points: list[dict[str, Any]],
+    ) -> int:
+        """Insert extracted decision points (choice, score, noul)."""
+        if not decision_points:
+            return 0
+        rows = [
+            (
+                session_id,
+                turn_n,
+                dp.get("decision_type", "choice"),
+                json.dumps(dp.get("state", {}), ensure_ascii=False),
+                json.dumps(dp.get("decision", {}), ensure_ascii=False),
+                str(dp.get("target_label", "")),
+            )
+            for dp in decision_points
+        ]
+        self._conn.executemany(
+            """INSERT INTO decision_points (session_id, turn_n, decision_type, state_json, decision_json, target_label)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        return len(rows)
+
+    def get_trajectories(self, session_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        """Fetch trajectory records."""
+        if session_id:
+            cur = self._conn.execute(
+                """SELECT id, session_id, turn_n, model, completed, trajectory_json, metadata_json, created_at
+                   FROM trajectories WHERE session_id = ? ORDER BY turn_n ASC LIMIT ?""",
+                (session_id, limit),
+            )
+        else:
+            cur = self._conn.execute(
+                """SELECT id, session_id, turn_n, model, completed, trajectory_json, metadata_json, created_at
+                   FROM trajectories ORDER BY id DESC LIMIT ?""",
+                (limit,),
+            )
+        results = []
+        for r in cur.fetchall():
+            try:
+                traj = json.loads(r[5])
+            except Exception:
+                traj = {}
+            try:
+                meta = json.loads(r[6])
+            except Exception:
+                meta = {}
+            results.append({
+                "id": r[0],
+                "session_id": r[1],
+                "turn_n": r[2],
+                "model": r[3],
+                "completed": bool(r[4]),
+                "trajectory": traj,
+                "metadata": meta,
+                "created_at": r[7],
+            })
+        return results
+
+    def get_decision_points(
+        self,
+        session_id: str | None = None,
+        decision_type: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Fetch extracted decision points."""
+        query = "SELECT id, session_id, turn_n, decision_type, state_json, decision_json, target_label, created_at FROM decision_points"
+        params: list[Any] = []
+        clauses = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if decision_type:
+            clauses.append("decision_type = ?")
+            params.append(decision_type)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY id ASC LIMIT ?"
+        params.append(limit)
+
+        cur = self._conn.execute(query, tuple(params))
+        results = []
+        for r in cur.fetchall():
+            try:
+                state = json.loads(r[4])
+            except Exception:
+                state = {}
+            try:
+                decision = json.loads(r[5])
+            except Exception:
+                decision = {}
+            results.append({
+                "id": r[0],
+                "session_id": r[1],
+                "turn_n": r[2],
+                "decision_type": r[3],
+                "state": state,
+                "decision": decision,
+                "target_label": r[6],
+                "created_at": r[7],
+            })
+        return results
+
+    def trajectory_count(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) FROM trajectories").fetchone()
+        return row[0] if row else 0
+
+    def decision_point_count(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) FROM decision_points").fetchone()
+        return row[0] if row else 0
+

@@ -15,7 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -63,6 +63,36 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             updated_at REAL NOT NULL DEFAULT (unixepoch('subsec')),
             PRIMARY KEY (key, scope)
         );
+
+        CREATE TABLE IF NOT EXISTS trajectories (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id          TEXT NOT NULL,
+            turn_n              INTEGER,
+            model               TEXT,
+            completed           INTEGER NOT NULL DEFAULT 1,
+            trajectory_json     TEXT NOT NULL,
+            metadata_json       TEXT,
+            created_at          REAL NOT NULL DEFAULT (unixepoch('subsec'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_trajectories_session
+            ON trajectories(session_id);
+
+        CREATE TABLE IF NOT EXISTS decision_points (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id          TEXT NOT NULL,
+            turn_n              INTEGER,
+            decision_type       TEXT NOT NULL,
+            state_json          TEXT NOT NULL,
+            decision_json       TEXT NOT NULL,
+            target_label        TEXT NOT NULL,
+            created_at          REAL NOT NULL DEFAULT (unixepoch('subsec'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_decision_session
+            ON decision_points(session_id);
+        CREATE INDEX IF NOT EXISTS idx_decision_type
+            ON decision_points(decision_type);
         """
     )
 
@@ -122,4 +152,36 @@ def run_migrations(conn: sqlite3.Connection) -> None:
                         "VALUES (?, ?, ?)",
                         (base + idx, c.get("term", ""), c.get("definition", "")),
                     )
+    if current < 3:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS trajectories (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id          TEXT NOT NULL,
+                turn_n              INTEGER,
+                model               TEXT,
+                completed           INTEGER NOT NULL DEFAULT 1,
+                trajectory_json     TEXT NOT NULL,
+                metadata_json       TEXT,
+                created_at          REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_trajectories_session
+                ON trajectories(session_id);
+
+            CREATE TABLE IF NOT EXISTS decision_points (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id          TEXT NOT NULL,
+                turn_n              INTEGER,
+                decision_type       TEXT NOT NULL,
+                state_json          TEXT NOT NULL,
+                decision_json       TEXT NOT NULL,
+                target_label        TEXT NOT NULL,
+                created_at          REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_decision_session
+                ON decision_points(session_id);
+            CREATE INDEX IF NOT EXISTS idx_decision_type
+                ON decision_points(decision_type);
+            """
+        )
     set_schema_version(conn, SCHEMA_VERSION)

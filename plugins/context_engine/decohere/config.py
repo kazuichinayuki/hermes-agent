@@ -145,13 +145,12 @@ class DecohereUserConfig:
 
 def load_decohere_config(hermes_home: Path) -> DecohereUserConfig:
     """Read decohere user config from config.yaml."""
-    import yaml
-
     config_path = hermes_home / "config.yaml"
     if not config_path.exists():
         return DecohereUserConfig()
 
     try:
+        import yaml
         with open(config_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
     except Exception:
@@ -162,21 +161,20 @@ def load_decohere_config(hermes_home: Path) -> DecohereUserConfig:
 
 def save_decohere_config(hermes_home: Path, config: DecohereUserConfig) -> None:
     """Write decohere user config back to config.yaml, preserving other keys."""
-    import yaml
-
     config_path = hermes_home / "config.yaml"
 
     # Read existing config
     existing: dict[str, Any] = {}
-    if config_path.exists():
-        try:
+    try:
+        import yaml
+        if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
                 existing = yaml.safe_load(f) or {}
-        except Exception:
-            pass
 
-    # Merge — only overwrite the 'decohere' block
-    existing["decohere"] = config.to_dict()
+        # Merge — only overwrite the 'decohere' block
+        existing["decohere"] = config.to_dict()
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(existing, f, allow_unicode=True, default_flow_style=False)
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(existing, f, allow_unicode=True, default_flow_style=False)
+    except Exception:
+        pass

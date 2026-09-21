@@ -29,6 +29,7 @@ from .types import BudgetTier
 from .context.formatter import format_entry_layer, format_proc_layer
 from .context.placeholder import build_placeholder
 from .core.extractor import last_turn_messages, mechanical_fields
+from .core.trajectory import build_trajectory_record, extract_typed_decisions
 from .io.session_io import SessionIO
 from .knowledge import SharedStore, build_injection_message
 from .monitoring.reporter import HealthReporter
@@ -84,6 +85,7 @@ class Decohere(ContextEngine):
         self._canary_token: str | None = None
         self._shared_store: SharedStore | None = None
         self._user_config: "DecohereUserConfig | None" = None
+        self._model: str = ""
 
         # Register Purifier hook for global tool interception
         try:
@@ -120,12 +122,89 @@ class Decohere(ContextEngine):
         if self._user_config.knowledge_injection:
             self._shared_store = SharedStore(home)
 
+    def on_turn_complete(
+        self,
+        messages: list[dict[str, Any]],
+        usage: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Capture the finalized turn transcript as ShareGPT trajectory and typed decisions."""
+        if not self._session_id or not self._io:
+            return
+
+        try:
+            turn_n = self._io.turn_count()
+            completed = not kwargs.get("failed", False) and not kwargs.get("interrupted", False)
+
+            # 1. Build ShareGPT / Hermes trajectory record
+            record = build_trajectory_record(
+                session_id=self._session_id,
+                turn_n=turn_n,
+                messages=messages,
+                model=self._model,
+                completed=completed,
+                usage=usage,
+                metadata=kwargs,
+            )
+
+            # 2. Extract typed decision points (choice, score, noul)
+            decisions = extract_typed_decisions(
+                messages=messages,
+                session_id=self._session_id,
+                turn_n=turn_n,
+            )
+
+            # 3. Persist via SessionIO (SQLite + session JSONL + global JSONL)
+            self._io.save_trajectory(
+                turn_n=turn_n,
+                model=self._model,
+                completed=completed,
+                trajectory=record,
+                decision_points=decisions,
+                metadata=kwargs,
+            )
+            logger.info(
+                "Decohere saved trajectory for turn %d (%d messages, %d decisions)",
+                turn_n, len(record.get("conversations", [])), len(decisions),
+            )
+        except Exception as e:
+            logger.warning("Decohere failed to record trajectory on turn complete: %s", e)
+
     def on_session_end(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         if self._health and self._tasks:
             self._health.snapshot_session_end(
                 session_id, self._tasks.pending_count(session_id)
             )
             self._tasks.cleanup(session_id)
+
+        # Record final session-level trajectory if messages are provided and IO is active
+        if self._io and messages:
+            try:
+                turn_n = self._io.turn_count()
+                record = build_trajectory_record(
+                    session_id=session_id,
+                    turn_n=turn_n,
+                    messages=messages,
+                    model=self._model,
+                    completed=True,
+                    metadata={"event": "session_end"},
+                )
+                decisions = extract_typed_decisions(
+                    messages=messages,
+                    session_id=session_id,
+                    turn_n=turn_n,
+                )
+                self._io.save_trajectory(
+                    turn_n=turn_n,
+                    model=self._model,
+                    completed=True,
+                    trajectory=record,
+                    decision_points=decisions,
+                    metadata={"event": "session_end"},
+                )
+            except Exception as e:
+                logger.warning("Decohere failed to record session end trajectory: %s", e)
+
         if self._io:
             self._io.close()
             self._io = None  # prevent should_compress() from using closed connection
@@ -419,6 +498,7 @@ class Decohere(ContextEngine):
                      base_url: str = "", api_key: str = "", provider: str = "",
                      api_mode: str = "", **kwargs):
         self.context_length = context_length
+        self._model = model
         # Always 1.0 — Decohere doesn't do token-pressure compression.
         # See class-level comment on threshold_percent.
         self.threshold_tokens = context_length
@@ -427,8 +507,8 @@ class Decohere(ContextEngine):
 
     @staticmethod
     def _read_config(config_path: Path) -> tuple[dict | None, dict | None]:
-        import yaml
         try:
+            import yaml
             with open(config_path) as f:
                 cfg = yaml.safe_load(f) or {}
             return cfg.get("auxiliary", {}), cfg.get("compression", {})
