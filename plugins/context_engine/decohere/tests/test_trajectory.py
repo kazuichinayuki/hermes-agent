@@ -127,6 +127,12 @@ class TestTrajectoryCore(unittest.TestCase):
         choice_dec = next(d for d in decisions if d["decision_type"] == "choice")
         self.assertEqual(choice_dec["target_label"], "grep_search")
         self.assertEqual(choice_dec["decision"]["tool"], "grep_search")
+        self.assertEqual(choice_dec["decision"]["domain"], "filesystem")
+        self.assertEqual(choice_dec["metadata"]["hierarchical"]["domain"], "filesystem")
+        self.assertEqual(choice_dec["metadata"]["hierarchical"]["sub_tool"], "grep_search")
+        # In the test, tool returned "error: connection reset", so error detection triggered
+        self.assertTrue(choice_dec["metadata"]["prediction_error"]["has_tool_error"])
+        self.assertTrue(choice_dec["metadata"]["prediction_error"]["worth_rethinking"])
 
         noul_decs = [d for d in decisions if d["decision_type"] == "noul"]
         self.assertEqual(len(noul_decs), 2)

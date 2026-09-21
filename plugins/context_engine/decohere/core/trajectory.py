@@ -20,6 +20,43 @@ _INTERNAL_SYSTEM_NAMES = frozenset({
     "ledger_l1", "turn_context", "turn_index", "shared_state", "shared_knowledge"
 })
 
+# Tool Domain Ontology for Coarse-to-Fine Hierarchical Choice (overcoming 50+ options limit)
+_TOOL_DOMAIN_MAP: Dict[str, str] = {
+    # Filesystem & Code edit
+    "view_file": "filesystem",
+    "write_to_file": "filesystem",
+    "replace_file_content": "filesystem",
+    "list_dir": "filesystem",
+    "find_by_name": "filesystem",
+    "grep_search": "filesystem",
+    "read_file": "filesystem",
+    # Execution & System management
+    "run_command": "execution",
+    "manage_task": "execution",
+    "schedule": "execution",
+    # Search & Memory
+    "search_web": "search",
+    "read_url_content": "search",
+    "recall_context": "memory",
+    # Coordination & Subagents
+    "invoke_subagent": "coordination",
+    "define_subagent": "coordination",
+    "manage_subagents": "coordination",
+    "send_message": "coordination",
+    "ask_question": "coordination",
+    "call_mcp_tool": "mcp",
+}
+
+_DOMAIN_CRITERIA: Dict[str, str] = {
+    "filesystem": "file inspection, search, creation, and code refactoring",
+    "execution": "running bash/terminal commands, task management, or timers",
+    "search": "external web search and online documentation reading",
+    "memory": "querying ledger context and past conversation decisions",
+    "coordination": "agent delegation, messaging, or asking user questions",
+    "mcp": "invoking registered Model Context Protocol extensions",
+    "reply": "answering user directly without invoking external tools",
+}
+
 
 def clean_messages_for_trajectory(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Strip internal Decohere-injected ledger and state messages so the trajectory
@@ -164,12 +201,26 @@ def extract_typed_decisions(
             "preceding_context": history_snippet,
         }
 
+        # Check tool execution feedback for Prediction Error / Surprise
+        has_tool_error = False
+        tool_feedback_snippet = ""
+        for next_idx in range(a_idx + 1, min(len(cleaned), a_idx + 4)):
+            next_msg = cleaned[next_idx]
+            if next_msg.get("role") == "tool":
+                c = str(next_msg.get("content") or "")
+                tool_feedback_snippet = c[:200]
+                c_lower = c.lower()
+                if any(err_kw in c_lower for err_kw in ("error", "failed", "exception", "traceback", "not found", "code 1", "exit code 1")):
+                    has_tool_error = True
+                    break
+
         # 1. Tool selection decision ('choice')
         if tool_calls and isinstance(tool_calls, list):
             for tc in tool_calls:
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 tool_name = fn.get("name", tc.get("name", "unknown"))
                 args = fn.get("arguments", {})
+                domain = _TOOL_DOMAIN_MAP.get(tool_name, "general")
                 decision_points.append({
                     "session_id": session_id,
                     "turn_n": turn_n,
@@ -178,21 +229,43 @@ def extract_typed_decisions(
                     "instructions": "Select the appropriate tool to execute for this step.",
                     "decision": {
                         "tool": tool_name,
+                        "domain": domain,
                         "arguments": args,
                     },
                     "target_label": tool_name,
-                    "metadata": {"step_index": step_idx, "has_more_tools": len(tool_calls) > 1},
+                    "metadata": {
+                        "step_index": step_idx,
+                        "has_more_tools": len(tool_calls) > 1,
+                        "hierarchical": {
+                            "domain": domain,
+                            "sub_tool": tool_name,
+                            "domain_criteria": _DOMAIN_CRITERIA.get(domain, ""),
+                        },
+                        "prediction_error": {
+                            "has_tool_error": has_tool_error,
+                            "worth_rethinking": has_tool_error,
+                            "feedback": tool_feedback_snippet,
+                        },
+                    },
                 })
         else:
+            domain = "reply"
             decision_points.append({
                 "session_id": session_id,
                 "turn_n": turn_n,
                 "decision_type": "choice",
                 "state": state,
                 "instructions": "Select the appropriate tool to execute for this step.",
-                "decision": {"tool": "direct_reply"},
+                "decision": {"tool": "direct_reply", "domain": "reply"},
                 "target_label": "direct_reply",
-                "metadata": {"step_index": step_idx},
+                "metadata": {
+                    "step_index": step_idx,
+                    "hierarchical": {
+                        "domain": "reply",
+                        "sub_tool": "direct_reply",
+                        "domain_criteria": _DOMAIN_CRITERIA.get("reply", ""),
+                    },
+                },
             })
 
         # 2. Goal completion decision ('noul': True if goal met, False if further tool calls needed)
@@ -204,7 +277,11 @@ def extract_typed_decisions(
             "instructions": "Has the user's intent been completely fulfilled without further actions?",
             "decision": is_final_step and not tool_calls,
             "target_label": "complete" if (is_final_step and not tool_calls) else "needs_action",
-            "metadata": {"step_index": step_idx, "is_final_step": is_final_step},
+            "metadata": {
+                "step_index": step_idx,
+                "is_final_step": is_final_step,
+                "worth_rethinking": has_tool_error,
+            },
         })
 
     # 3. Complexity score ('score': 0=direct answer, 1=single tool, 2=multi-step workflow)
