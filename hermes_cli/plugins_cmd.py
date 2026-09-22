@@ -698,6 +698,26 @@ def _ensure_tree_readable(root: Path, plugins_dir: Path) -> None:
             ) from exc
 
 
+def _refuse_unavailable_portable_plugin(plugin_name: str, tree: Path) -> None:
+    if not (tree / "plugin.json").is_file():
+        return
+    from hermes_cli.agent_plugins import load_agent_plugin
+    from hermes_platform.resolver.availability import availability
+
+    try:
+        package = load_agent_plugin(tree, tree.parent / ".hermes-install-data")
+    except ValueError as exc:
+        raise PluginOperationError(f"Plugin '{plugin_name}' is unavailable: {exc}.") from exc
+    for server_name, server_decl in package.server_declarations.items():
+        result = availability(server_decl.declaration)
+        if result.offerable:
+            continue
+        found = f", found version {result.version}" if result.version else ""
+        raise PluginOperationError(
+            f"Plugin '{plugin_name}' server '{server_name}' is unavailable: {result.state}{found}."
+        )
+
+
 def _swap_in_plugin(tmp_target: Path, target: Path, backup: Path, old_metadata: dict, new_metadata: dict) -> None:
     """Move the validated clone into place and persist metadata; on any failure restore the
     previous tree (if one was replaced) and the previous metadata sidecar, then re-raise."""
@@ -729,15 +749,20 @@ def _install_plugin_core(
     python_deps: bool = True,
     catalog: Optional[dict] = None,
     allow_removed: bool = False,
+    before_swap=None,
 ) -> tuple[Path, dict, str]:
     """Clone a Git plugin and atomically record its source and exact revision.
 
     *reviewed_pin* is the curated-catalog sha for this install; the scan trusts the tree
-    only when the checked-out revision is exactly that sha. *python_deps* False skips the
+    only when the checked-out revision is exactly that sha (an annotated-tag pin is peeled to
+    its commit first — HEAD can only ever be the commit). *python_deps* False skips the
     dependency conflict gate (``--no-deps``: the user installs them by hand). *catalog*
     (``{"name", "repo", "tier", "pin"}``) is recorded on the install-metadata record with the
-    checked-out sha — provenance lives OUTSIDE the plugin tree, so a repo cannot forge it.
-    *allow_removed* records that the user knowingly bypassed the kill list."""
+    checked-out sha — provenance lives OUTSIDE the plugin tree, so a repo cannot forge it;
+    its ``pin`` is kept only when the checkout satisfies it (a ``--ref`` install is off-pin).
+    *allow_removed* records that the user knowingly bypassed the kill list.
+    *before_swap(manifest, tree)* runs on the validated clone before anything moves into place
+    and may raise :class:`PluginOperationError` to abort (re-pin consent)."""
     requested_revision = _normalize_exact_revision(ref) if ref is not None else None
     try:
         git_url, subdir = _resolve_git_url(identifier)
@@ -758,6 +783,9 @@ def _install_plugin_core(
     with tempfile.TemporaryDirectory(prefix=".install-", dir=plugins_dir) as tmp:
         tmp_clone = Path(tmp) / "plugin"
         installed_revision = _clone_plugin_repo(tmp_clone, git_url, requested_revision)
+        git_exe = _resolve_git_executable()
+        at_reviewed_pin = bool(reviewed_pin) and installed_revision == (
+            _git_resolve_commit(tmp_clone, git_exe, reviewed_pin) if git_exe and reviewed_pin else reviewed_pin)
         tmp_target = _resolve_subdir_within(tmp_clone, subdir) if subdir else tmp_clone
         _ensure_tree_readable(tmp_target, plugins_dir)
         manifest = _read_manifest_for_install(tmp_target)
@@ -770,9 +798,12 @@ def _install_plugin_core(
         _check_manifest_version(manifest, plugin_name)
         # Scan BEFORE anything is moved into place; raises PluginScanBlocked when blocked.
         _scan_plugin_tree(tmp_target, identifier, force=force, scan_decision_cb=scan_decision_cb,
-                          reviewed_pin=bool(reviewed_pin) and installed_revision == reviewed_pin)
+                          reviewed_pin=at_reviewed_pin)
         if python_deps:
             _refuse_conflicting_python_deps(tmp_target, plugin_name)
+        _refuse_unavailable_portable_plugin(plugin_name, tmp_target)
+        if before_swap is not None:
+            before_swap(manifest, tmp_target)
 
         if target.exists() and not force:
             raise PluginOperationError(
@@ -787,7 +818,9 @@ def _install_plugin_core(
         record: dict[str, object] = {
             "pinned": requested_revision is not None, "revision": installed_revision, "source": source}
         if catalog:
-            record["catalog"] = {**catalog, "sha": installed_revision}
+            # ``sha`` = the commit checked out; ``pin`` = the reviewed catalog sha it satisfies (the
+            # annotated-tag object for a tag pin), empty when installed off-pin via ``--ref``.
+            record["catalog"] = {**catalog, "sha": installed_revision, "pin": reviewed_pin if at_reviewed_pin else ""}
         if allow_removed:
             record["allow_removed"] = True
         new_metadata = {**old_metadata, plugin_name: record}
@@ -2093,8 +2126,10 @@ def _user_installed_plugin_dir(name: str) -> Optional[Path]:
     return target if target.is_dir() else None
 
 
-def dashboard_update_user_plugin(name: str) -> dict[str, Any]:
-    """``git pull`` inside ``~/.hermes/plugins/<name>``."""
+def dashboard_update_user_plugin(name: str, *, accept_capabilities: bool = False) -> dict[str, Any]:
+    """``git pull`` inside ``~/.hermes/plugins/<name>``; catalog installs re-pin instead. A re-pin that
+    widens the plugin returns ``{"ok": False, "consent_required": True, "delta": {...}}`` with nothing
+    changed — the surface shows the delta and retries with *accept_capabilities*."""
     from hermes_cli import plugins_cmd_catalog as catalog
     target = _user_installed_plugin_dir(name)
     if target is None:
@@ -2102,7 +2137,8 @@ def dashboard_update_user_plugin(name: str) -> dict[str, Any]:
     sidecar = catalog.read_catalog_sidecar(target)
     try:
         if sidecar:
-            result = catalog.repin_catalog_plugin(target, sidecar)
+            result = catalog.repin_catalog_plugin(
+                target, sidecar, consent_cb=(lambda _delta: True) if accept_capabilities else None)
             warnings = list(result.warnings)
             new_target = target.parent / result.installed_name
             deps = _install_python_dependencies_quietly(new_target, warnings) if result.changed else []
@@ -2115,6 +2151,9 @@ def dashboard_update_user_plugin(name: str) -> dict[str, Any]:
                 f"run `hermes plugins install {rec.get('source', '<source>')} --force "
                 "--ref <40-character commit SHA>` to move it."),
             lambda: f"Plugin '{name}' is not a git checkout; cannot pull updates.")
+    except catalog.RepinConsentRequired as exc:
+        return {"ok": False, "consent_required": True, "error": str(exc), "name": exc.name, "sha": exc.sha,
+                "delta": exc.delta, "delta_lines": catalog.surface_delta_lines(exc.delta)}
     except PluginOperationError as exc:
         return {"ok": False, "error": str(exc)}
     _post_pull_housekeeping(target, _console())
