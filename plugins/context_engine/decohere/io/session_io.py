@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..db import configure_connection, ensure_schema, run_migrations
-from ..store import RawMessageStore, LedgerStore, TrajectoryStore
+from ..store import RawMessageStore, LedgerStore, TrajectoryStore, NogoodClauseStore, ArchiveStore
 from .state_store import StateStore
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,8 @@ class SessionIO:
         self._ledger = LedgerStore(conn)
         self._state = StateStore(conn)
         self._trajectories = TrajectoryStore(conn)
+        self._nogoods = NogoodClauseStore(conn)
+        self._archives = ArchiveStore(conn)
         self._session_id = session_id
         self._session_dir = session_dir
         self._trajectory_file = session_dir / "trajectories.jsonl"
@@ -179,6 +181,23 @@ class SessionIO:
 
     def decision_point_count(self) -> int:
         return self._trajectories.decision_point_count()
+
+    # ── Nogoods and Archives ──────────────────────────────────────────
+
+    def save_nogood_clause(self, clause: dict[str, Any]) -> None:
+        self._nogoods.save_clause(self._session_id, clause)
+        self._conn.commit()
+
+    def load_nogood_clauses(self) -> list[dict[str, Any]]:
+        return self._nogoods.load_clauses(self._session_id)
+
+    def archive_tool_result(self, tool_name: str, raw_result: str, state: str) -> int:
+        res = self._archives.archive(self._session_id, tool_name, raw_result, state)
+        self._conn.commit()
+        return res
+
+    def get_archived_tool_results(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self._archives.get_archives(self._session_id, limit)
 
     # ── Session metadata ──────────────────────────────────────────────
 

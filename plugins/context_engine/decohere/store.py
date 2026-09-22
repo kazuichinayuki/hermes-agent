@@ -310,3 +310,96 @@ class TrajectoryStore:
         row = self._conn.execute("SELECT COUNT(*) FROM decision_points").fetchone()
         return row[0] if row else 0
 
+
+class NogoodClauseStore:
+    """Persistence for CDCL Nogood clauses learned during execution."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def save_clause(self, session_id: str, clause: dict[str, Any]) -> None:
+        pattern = clause.get("pattern", {})
+        pattern_json = json.dumps(pattern, sort_keys=True) if isinstance(pattern, dict) else str(pattern)
+        self._conn.execute(
+            """INSERT OR REPLACE INTO nogood_clauses
+               (clause_id, session_id, predicate, tool_name, pattern_json, reason, scope, hit_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                clause["clause_id"],
+                session_id,
+                clause["predicate"],
+                clause["tool_name"],
+                pattern_json,
+                clause["reason"],
+                clause.get("scope", "session"),
+                clause.get("hit_count", 0),
+            ),
+        )
+
+    def load_clauses(self, session_id: str) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """SELECT clause_id, predicate, tool_name, pattern_json, reason, scope, hit_count, created_at
+               FROM nogood_clauses WHERE session_id = ? ORDER BY created_at ASC""",
+            (session_id,),
+        )
+        results = []
+        for r in cur.fetchall():
+            try:
+                pattern = json.loads(r[3])
+            except Exception:
+                pattern = {}
+            results.append({
+                "clause_id": r[0],
+                "predicate": r[1],
+                "tool_name": r[2],
+                "pattern": pattern,
+                "reason": r[4],
+                "scope": r[5],
+                "hit_count": r[6],
+            })
+        return results
+
+    def clause_count(self, session_id: str | None = None) -> int:
+        if session_id:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM nogood_clauses WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        else:
+            row = self._conn.execute("SELECT COUNT(*) FROM nogood_clauses").fetchone()
+        return row[0] if row else 0
+
+
+class ArchiveStore:
+    """Out-of-band archive for raw tool outputs (e.g. evaporated Redulogs)."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def archive(self, session_id: str, tool_name: str, raw_result: str, state: str) -> int:
+        cur = self._conn.execute(
+            """INSERT INTO tool_results_archive (session_id, tool_name, raw_result, state)
+               VALUES (?, ?, ?, ?)""",
+            (session_id, tool_name, raw_result, state),
+        )
+        return cur.lastrowid or 0
+
+    def get_archives(self, session_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """SELECT id, session_id, tool_name, raw_result, state, created_at
+               FROM tool_results_archive WHERE session_id = ? ORDER BY id DESC LIMIT ?""",
+            (session_id, limit),
+        )
+        return [
+            {
+                "id": r[0],
+                "session_id": r[1],
+                "tool_name": r[2],
+                "raw_result": r[3],
+                "state": r[4],
+                "created_at": r[5],
+            }
+            for r in cur.fetchall()
+        ]
+
+

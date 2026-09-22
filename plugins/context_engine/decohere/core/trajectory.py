@@ -284,6 +284,35 @@ def extract_typed_decisions(
             },
         })
 
+        # 3. Predictive processing decision ('predictive_decision': Fast-Path vs System 2 Wakeup)
+        if tool_calls and isinstance(tool_calls, list):
+            for tc in tool_calls:
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                tname = fn.get("name", tc.get("name", "unknown"))
+                targs = fn.get("arguments", {})
+                from .predictive_controller import PredictiveController
+                pc = PredictiveController()
+                res = pc.evaluate(tname, targs, tool_feedback_snippet)
+                decision_points.append({
+                    "session_id": session_id,
+                    "turn_n": turn_n,
+                    "decision_type": "predictive_decision",
+                    "state": state,
+                    "instructions": "Evaluate surprise S_t from tool observation: fast_path (S_t <= 0.35) or wake_system2 (S_t > 0.35).",
+                    "decision": {
+                        "surprise_score": res.surprise_score,
+                        "wake_system2": res.should_wake_system2,
+                        "residual_vector": res.residual_vector,
+                        "entropy_estimate": res.entropy_estimate,
+                    },
+                    "target_label": "wake_system2" if res.should_wake_system2 else "fast_path",
+                    "metadata": {
+                        "step_index": step_idx,
+                        "tool_name": tname,
+                        "diagnostic": res.diagnostic_summary,
+                    },
+                })
+
     # 3. Complexity score ('score': 0=direct answer, 1=single tool, 2=multi-step workflow)
     tool_count = sum(len(cleaned[idx].get("tool_calls") or []) for idx in assistant_indices)
     complexity_tier = 0 if tool_count == 0 else (1 if tool_count == 1 else 2)

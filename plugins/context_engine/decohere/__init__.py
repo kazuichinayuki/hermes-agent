@@ -35,6 +35,9 @@ from .knowledge import SharedStore, build_injection_message
 from .monitoring.reporter import HealthReporter
 from .scheduling.metrics import MetricsCollector
 from .scheduling.task_manager import TaskManager
+from .core.infotractor import Infotractor, ObservationState
+from .core.nogood_store import NogoodClause, NogoodStore
+from .core.predictive_controller import PredictiveController, PredictiveResidual
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +90,20 @@ class Decohere(ContextEngine):
         self._user_config: "DecohereUserConfig | None" = None
         self._model: str = ""
 
-        # Register Purifier hook for global tool interception
+        # Deliberation Controller components
+        self._nogood_store: NogoodStore = NogoodStore()
+        self._infotractor: Infotractor = Infotractor()
+        self._predictive_controller: PredictiveController = PredictiveController()
+
+        # Register lifecycle hooks for global tool interception
         try:
             from hermes_cli.plugins import get_plugin_manager
             pm = get_plugin_manager()
+            pm.register_hook("pre_tool_call", self.pre_tool_call)
             pm.register_hook("transform_tool_result", self.transform_tool_result)
+            pm.register_hook("post_tool_call", self.post_tool_call)
         except Exception as e:
-            logger.warning("Decohere failed to register transform_tool_result hook: %s", e)
+            logger.warning("Decohere failed to register deliberation hooks: %s", e)
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -121,6 +131,14 @@ class Decohere(ContextEngine):
         self._user_config = _load_user_config(home)
         if self._user_config.knowledge_injection:
             self._shared_store = SharedStore(home)
+
+        # ── Deliberation components session init & load ──
+        self._nogood_store = NogoodStore(session_id=session_id)
+        self._infotractor = Infotractor(session_id=session_id)
+        self._predictive_controller = PredictiveController(session_id=session_id)
+        stored_nogoods = self._io.load_nogood_clauses()
+        if stored_nogoods:
+            self._nogood_store.load_dict(stored_nogoods)
 
     def on_turn_complete(
         self,
@@ -303,7 +321,7 @@ class Decohere(ContextEngine):
 
         _LEDGER_NAMES = frozenset({
             "ledger_l1", "turn_context", "turn_index",
-            "shared_state", "shared_knowledge",
+            "shared_state", "shared_knowledge", "nogood_constraints",
         })
 
         self._initial_compress_done = True
@@ -316,6 +334,17 @@ class Decohere(ContextEngine):
         if readiness.state == "legacy":
             return build_raw_context(messages)
         if readiness.state == "empty":
+            if self._nogood_store:
+                nogood_summary = self._nogood_store.format_ledger_summary()
+                if nogood_summary:
+                    return list(messages) + [
+                        {
+                            "role": "system",
+                            "name": "nogood_constraints",
+                            "content": f"<!-- DECOHERE:START -->\n{nogood_summary}\n<!-- DECOHERE:END -->",
+                            "_decohere_injected": True,
+                        }
+                    ]
             return messages
 
         user_intent = focus_topic or _extract_intent_from_messages(messages)
@@ -373,6 +402,18 @@ class Decohere(ContextEngine):
             if state_block:
                 result = list(result) + [
                     {"role": "system", "name": "shared_state", "content": state_block}
+                ]
+
+        # ── Learned Nogood Constraints Dynamic Working Memory Injection ──
+        if self._nogood_store:
+            nogood_summary = self._nogood_store.format_ledger_summary()
+            if nogood_summary:
+                result = list(result) + [
+                    {
+                        "role": "system",
+                        "name": "nogood_constraints",
+                        "content": f"<!-- DECOHERE:START -->\n{nogood_summary}\n<!-- DECOHERE:END -->",
+                    }
                 ]
 
         for msg in result:
@@ -465,19 +506,59 @@ class Decohere(ContextEngine):
             ensure_ascii=False,
         )
 
+    def pre_tool_call(self, tool_name: str, args: dict, task_id: str = "", **kwargs) -> dict | None:
+        """Directive hook: evaluate learned conflict preemption (0ms / 0 tokens)."""
+        try:
+            return self._nogood_store.evaluate_preemption(tool_name, args)
+        except Exception as e:
+            logger.warning("Decohere pre_tool_call preemption evaluation failed: %s", e)
+            return None
+
     def transform_tool_result(self, tool_name: str, args: dict, result: str, **kwargs) -> str | None:
-        """Purify the tool result before it enters context."""
+        """Transform hook: purify text, evaporate Redulogs, and extract conflict constraints."""
         try:
             if not isinstance(result, str):
                 return None
             from .core.purifier import purify_text
             purified = purify_text(result)
-            if purified != result:
-                logger.debug("Decohere purifier compressed output for tool %s (len %d -> %d)", tool_name, len(result), len(purified))
-            return purified
-        except Exception as e:
-            logger.warning("Decohere purifier failed for tool %s: %s", tool_name, e)
+
+            # Distill through Infotractor
+            compiled, state, nogood_clause, raw_archive = self._infotractor.compile(
+                tool_name, args, purified, **kwargs
+            )
+
+            # Archive evaporated raw log out-of-band to SQLite
+            if raw_archive and self._io:
+                self._io.archive_tool_result(tool_name, raw_archive, state.value)
+
+            # If conflict produced a new NogoodClause, record and persist it
+            if nogood_clause:
+                is_new = self._nogood_store.add_clause(nogood_clause)
+                if is_new and self._io:
+                    from dataclasses import asdict
+                    self._io.save_nogood_clause(asdict(nogood_clause))
+
+            if compiled != result:
+                logger.debug(
+                    "Decohere Infotractor distilled %s (state=%s, len %d -> %d)",
+                    tool_name, state.value, len(result), len(compiled),
+                )
+                return compiled
             return None
+        except Exception as e:
+            logger.warning("Decohere transform_tool_result failed for %s: %s", tool_name, e)
+            return None
+
+    def post_tool_call(self, tool_name: str, args: dict, result: str, duration_ms: int = 0, **kwargs) -> None:
+        """Observer hook: calculate prediction residual ϵ_t and surprise S_t."""
+        try:
+            res = self._predictive_controller.evaluate(tool_name, args, result, duration_ms=duration_ms)
+            if res.should_wake_system2:
+                logger.info("[PredictiveController: SURPRISE TRIGGER] %s", res.diagnostic_summary)
+            else:
+                logger.debug("[PredictiveController: FAST PATH] %s", res.diagnostic_summary)
+        except Exception as e:
+            logger.warning("Decohere post_tool_call evaluation failed for %s: %s", tool_name, e)
 
     # ── Status ─────────────────────────────────────────────────────────
 

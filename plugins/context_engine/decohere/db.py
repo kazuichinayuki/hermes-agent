@@ -15,7 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
@@ -93,6 +93,35 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON decision_points(session_id);
         CREATE INDEX IF NOT EXISTS idx_decision_type
             ON decision_points(decision_type);
+
+        CREATE TABLE IF NOT EXISTS nogood_clauses (
+            clause_id       TEXT PRIMARY KEY,
+            session_id      TEXT NOT NULL,
+            predicate       TEXT NOT NULL,
+            tool_name       TEXT NOT NULL,
+            pattern_json    TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            scope           TEXT NOT NULL DEFAULT 'session',
+            hit_count       INTEGER NOT NULL DEFAULT 0,
+            created_at      REAL NOT NULL DEFAULT (unixepoch('subsec'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_nogood_tool
+            ON nogood_clauses(tool_name);
+        CREATE INDEX IF NOT EXISTS idx_nogood_session
+            ON nogood_clauses(session_id);
+
+        CREATE TABLE IF NOT EXISTS tool_results_archive (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id      TEXT NOT NULL,
+            tool_name       TEXT NOT NULL,
+            raw_result      TEXT NOT NULL,
+            state           TEXT NOT NULL,
+            created_at      REAL NOT NULL DEFAULT (unixepoch('subsec'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_archive_session
+            ON tool_results_archive(session_id);
         """
     )
 
@@ -182,6 +211,37 @@ def run_migrations(conn: sqlite3.Connection) -> None:
                 ON decision_points(session_id);
             CREATE INDEX IF NOT EXISTS idx_decision_type
                 ON decision_points(decision_type);
+            """
+        )
+    if current < 4:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS nogood_clauses (
+                clause_id       TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                predicate       TEXT NOT NULL,
+                tool_name       TEXT NOT NULL,
+                pattern_json    TEXT NOT NULL,
+                reason          TEXT NOT NULL,
+                scope           TEXT NOT NULL DEFAULT 'session',
+                hit_count       INTEGER NOT NULL DEFAULT 0,
+                created_at      REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_nogood_tool
+                ON nogood_clauses(tool_name);
+            CREATE INDEX IF NOT EXISTS idx_nogood_session
+                ON nogood_clauses(session_id);
+
+            CREATE TABLE IF NOT EXISTS tool_results_archive (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT NOT NULL,
+                tool_name       TEXT NOT NULL,
+                raw_result      TEXT NOT NULL,
+                state           TEXT NOT NULL,
+                created_at      REAL NOT NULL DEFAULT (unixepoch('subsec'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_archive_session
+                ON tool_results_archive(session_id);
             """
         )
     set_schema_version(conn, SCHEMA_VERSION)
