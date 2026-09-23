@@ -284,32 +284,32 @@ def extract_typed_decisions(
             },
         })
 
-        # 3. Predictive processing decision ('predictive_decision': Fast-Path vs System 2 Wakeup)
+        # 3. Reflection trigger decision ('reflect_trigger': Fast-Path vs LLM Reflection)
         if tool_calls and isinstance(tool_calls, list):
             for tc in tool_calls:
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 tname = fn.get("name", tc.get("name", "unknown"))
                 targs = fn.get("arguments", {})
-                from .predictive_controller import PredictiveController
-                pc = PredictiveController()
-                res = pc.evaluate(tname, targs, tool_feedback_snippet)
+                from .reflect_trigger import ReflectTrigger
+                rt = ReflectTrigger()
+                decision = rt.evaluate(tname, targs, tool_feedback_snippet)
                 decision_points.append({
                     "session_id": session_id,
                     "turn_n": turn_n,
-                    "decision_type": "predictive_decision",
+                    "decision_type": "reflect_trigger",
                     "state": state,
-                    "instructions": "Evaluate surprise S_t from tool observation: fast_path (S_t <= 0.35) or wake_system2 (S_t > 0.35).",
+                    "instructions": "Evaluate observation: fast_path (no reflection needed) or trigger_reflection (wakes LLM).",
                     "decision": {
-                        "surprise_score": res.surprise_score,
-                        "wake_system2": res.should_wake_system2,
-                        "residual_vector": res.residual_vector,
-                        "entropy_estimate": res.entropy_estimate,
+                        "should_reflect": decision.should_reflect,
+                        "trigger_score": decision.trigger_score,
+                        "reasons": decision.reasons,
+                        "entropy_estimate": decision.entropy_estimate,
                     },
-                    "target_label": "wake_system2" if res.should_wake_system2 else "fast_path",
+                    "target_label": "trigger_reflection" if decision.should_reflect else "fast_path",
                     "metadata": {
                         "step_index": step_idx,
                         "tool_name": tname,
-                        "diagnostic": res.diagnostic_summary,
+                        "diagnostic": decision.diagnostic_summary,
                     },
                 })
 

@@ -29,7 +29,7 @@ if "agent" not in sys.modules:
 
 from plugins.context_engine.decohere.core.infotractor import Infotractor, ObservationState
 from plugins.context_engine.decohere.core.nogood_store import NogoodClause, NogoodStore
-from plugins.context_engine.decohere.core.predictive_controller import PredictiveController
+from plugins.context_engine.decohere.core.reflect_trigger import ReflectTrigger
 from plugins.context_engine.decohere.db import ensure_schema, get_schema_version, run_migrations
 from plugins.context_engine.decohere.io.session_io import SessionIO
 from plugins.context_engine.decohere import Decohere
@@ -137,33 +137,33 @@ class TestDeliberationController(unittest.TestCase):
         self.assertIn("REDULOG EVAPORATED", evaporated)
         self.assertIn('ImportError: cannot import name "NonExistentClass"', evaporated)
 
-    # ── 3. PredictiveController Tests ──────────────────────────────────────────
+    # ── 3. ReflectTrigger Tests ───────────────────────────────────────────────
 
-    def test_predictive_controller_fast_path(self):
-        pc = PredictiveController(threshold=0.35)
-        # Success scenario: grep finds 3 matches
-        residual = pc.evaluate(
+    def test_reflect_trigger_fast_path(self):
+        rt = ReflectTrigger(threshold=0.35)
+        # Normal scenario: grep finds matches without errors
+        decision = rt.evaluate(
             tool_name="grep_search",
             args={"Query": "found_symbol", "SearchPath": "src/"},
             actual_result='[{"LineNumber": 10, "LineContent": "def found_symbol():"}]',
             duration_ms=45,
         )
-        self.assertLess(residual.surprise_score, 0.35)
-        self.assertFalse(residual.should_wake_system2)
+        self.assertLess(decision.trigger_score, 0.35)
+        self.assertFalse(decision.should_reflect)
 
-    def test_predictive_controller_surprise_wakeup(self):
-        pc = PredictiveController(threshold=0.35)
+    def test_reflect_trigger_anomaly_wakeup(self):
+        rt = ReflectTrigger(threshold=0.35)
         # Failure scenario: run_command exits with error and traceback
-        residual = pc.evaluate(
+        decision = rt.evaluate(
             tool_name="run_command",
             args={"CommandLine": "python3 run.py"},
             actual_result="Traceback (most recent call last):\n  File 'run.py', line 1\nSyntaxError: invalid syntax\nexit code 1",
             duration_ms=200,
         )
-        self.assertGreaterEqual(residual.surprise_score, 0.35)
-        self.assertTrue(residual.should_wake_system2)
-        self.assertEqual(residual.residual_vector["r_exit"], 1.0)
-        self.assertEqual(residual.residual_vector["r_traceback"], 1.0)
+        self.assertGreaterEqual(decision.trigger_score, 0.35)
+        self.assertTrue(decision.should_reflect)
+        self.assertIn("execution_error", decision.reasons)
+        self.assertIn("unhandled_exception", decision.reasons)
 
     # ── 4. Lifecycle & Cache-Safe Dynamic Ledger Injection ─────────────────────
 

@@ -37,7 +37,7 @@ from .scheduling.metrics import MetricsCollector
 from .scheduling.task_manager import TaskManager
 from .core.infotractor import Infotractor, ObservationState
 from .core.nogood_store import NogoodClause, NogoodStore
-from .core.predictive_controller import PredictiveController, PredictiveResidual
+from .core.reflect_trigger import ReflectTrigger, ReflectDecision
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +90,10 @@ class Decohere(ContextEngine):
         self._user_config: "DecohereUserConfig | None" = None
         self._model: str = ""
 
-        # Deliberation Controller components
+        # Deliberation / Reflection probe components
         self._nogood_store: NogoodStore = NogoodStore()
         self._infotractor: Infotractor = Infotractor()
-        self._predictive_controller: PredictiveController = PredictiveController()
+        self._reflect_trigger: ReflectTrigger = ReflectTrigger()
 
         # Register lifecycle hooks for global tool interception
         try:
@@ -132,10 +132,10 @@ class Decohere(ContextEngine):
         if self._user_config.knowledge_injection:
             self._shared_store = SharedStore(home)
 
-        # ── Deliberation components session init & load ──
+        # ── Deliberation / Reflection probe session init & load ──
         self._nogood_store = NogoodStore(session_id=session_id)
         self._infotractor = Infotractor(session_id=session_id)
-        self._predictive_controller = PredictiveController(session_id=session_id)
+        self._reflect_trigger = ReflectTrigger(session_id=session_id)
         stored_nogoods = self._io.load_nogood_clauses()
         if stored_nogoods:
             self._nogood_store.load_dict(stored_nogoods)
@@ -550,13 +550,13 @@ class Decohere(ContextEngine):
             return None
 
     def post_tool_call(self, tool_name: str, args: dict, result: str, duration_ms: int = 0, **kwargs) -> None:
-        """Observer hook: calculate prediction residual ϵ_t and surprise S_t."""
+        """Observer hook: evaluate observation to decide if LLM reflection should be triggered."""
         try:
-            res = self._predictive_controller.evaluate(tool_name, args, result, duration_ms=duration_ms)
-            if res.should_wake_system2:
-                logger.info("[PredictiveController: SURPRISE TRIGGER] %s", res.diagnostic_summary)
+            decision = self._reflect_trigger.evaluate(tool_name, args, result, duration_ms=duration_ms)
+            if decision.should_reflect:
+                logger.info("[ReflectTrigger: REFLECTION REQUIRED] %s", decision.diagnostic_summary)
             else:
-                logger.debug("[PredictiveController: FAST PATH] %s", res.diagnostic_summary)
+                logger.debug("[ReflectTrigger: FAST PATH] %s", decision.diagnostic_summary)
         except Exception as e:
             logger.warning("Decohere post_tool_call evaluation failed for %s: %s", tool_name, e)
 
