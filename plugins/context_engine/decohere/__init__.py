@@ -99,9 +99,19 @@ class Decohere(ContextEngine):
         try:
             from hermes_cli.plugins import get_plugin_manager
             pm = get_plugin_manager()
-            pm.register_hook("pre_tool_call", self.pre_tool_call)
-            pm.register_hook("transform_tool_result", self.transform_tool_result)
-            pm.register_hook("post_tool_call", self.post_tool_call)
+            if hasattr(pm, "register_hook"):
+                pm.register_hook("pre_tool_call", self.pre_tool_call)
+                pm.register_hook("transform_tool_result", self.transform_tool_result)
+                pm.register_hook("post_tool_call", self.post_tool_call)
+            elif hasattr(pm, "_hooks"):
+                for hook_name, fn in [
+                    ("pre_tool_call", self.pre_tool_call),
+                    ("transform_tool_result", self.transform_tool_result),
+                    ("post_tool_call", self.post_tool_call),
+                ]:
+                    hooks = pm._hooks.setdefault(hook_name, [])
+                    if fn not in hooks:
+                        hooks.append(fn)
         except Exception as e:
             logger.warning("Decohere failed to register deliberation hooks: %s", e)
 
