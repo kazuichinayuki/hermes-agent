@@ -680,6 +680,10 @@ export const ru = defineLocale({
       backdropDesc: 'Блёклый силуэт позади диалога.',
       userBubbleTitle: 'Пузырь сообщения',
       userBubbleDesc: 'Насколько прозрачны ваши сообщения. 0 — сплошная заливка, 100 — остаётся только контур.',
+      textDirectionTitle: 'Направление текста',
+      textDirectionDesc:
+        'Как сообщения чата и поле ввода выбирают направление. «Авто» ориентируется на первую букву каждого абзаца; выберите направление, если смешанный текст выстраивается неправильно. Код всегда остаётся слева направо.',
+      textDirection: { auto: 'Авто', rtl: 'Справа налево', ltr: 'Слева направо' },
       introSplashTitle: 'Экран приветствия',
       introSplashDesc: 'Логотип и подсказка, показываемые на пустом чате.',
       reactionsTitle: 'Реакции на сообщения',
@@ -1424,6 +1428,28 @@ export const ru = defineLocale({
       deepLinkErrorTooLarge: 'Пакет конфигурации превышает лимит 32 КБ.'
     },
     model: {
+      moaPreset: 'Пресет',
+      moaDescription:
+        'Настройте именованные пресеты, которые появятся как модели провайдера Mixture of Agents. Модель-агрегатор выполняет каждый шаг цикла инструментов; почти вся стоимость запуска списывается у её провайдера. По умолчанию референсные модели дают совет один раз на сообщение пользователя.',
+      moaAggregator: 'Модель-агрегатор',
+      moaAggregatorBilled: 'исполняющая модель · на неё приходится стоимость запуска',
+      moaReferenceHint: 'по умолчанию советует один раз за ход',
+      setupProviderFallback: 'провайдер',
+      setUpProvider: name => `Настроить ${name}`,
+      staleAuxBefore: (count, names) => `Вспомогательные задачи (${count}: ${names}) по-прежнему используют `,
+      staleAuxAfter: ', а не основную модель.',
+      staleAuxOtherProviders: 'других провайдеров',
+      moaEnabled: 'Включено',
+      moaSetDefault: 'Сделать основным',
+      moaNewPresetPlaceholder: 'новый пресет',
+      moaAddPreset: 'Добавить пресет',
+      customModel: 'Своя модель…',
+      customModelPlaceholder: 'ID модели',
+      chooseFromList: 'Выбрать из списка',
+      moaDefault: 'По умолчанию:',
+      moaReferenceToggle: (enabled, index) => `${enabled ? 'Отключить' : 'Включить'} референс ${index}`,
+      moaReferenceTitle: index => `Референс ${index}`,
+      moaAddReference: 'Добавить референсную модель',
       loading: 'Загрузка конфигурации модели…',
       appliesDesc:
         'Применяется к новым сеансам. Для горячей смены модели в активном чате используйте выборщик модели в композере.',
@@ -2535,6 +2561,38 @@ export const ru = defineLocale({
     missingBody: 'Этот артефакт больше нет в локальном реестре.'
   },
   sidebar: {
+    profileRail: 'Панель профилей',
+    filter: {
+      grouping: 'Группировка',
+      ordering: 'Сортировка',
+      show: 'Показывать',
+      inboxStyle: 'Стиль «Входящие»',
+      status: 'Статус',
+      pullRequest: 'Запрос на слияние',
+      profile: 'Профиль',
+      project: 'Проект',
+      archived: 'Архивные',
+      expandAll: 'Развернуть все',
+      collapseAll: 'Свернуть все',
+      updated: 'Обновление',
+      created: 'Создано',
+      tokens: 'Токены',
+      cost: 'Стоимость',
+      manual: 'Вручную',
+      preview: 'Превью',
+      pr: 'PR',
+      open: 'Открыт',
+      draft: 'Черновик',
+      merged: 'Слит',
+      closed: 'Закрыт',
+      needsInput: 'Нужен ввод',
+      working: 'В работе',
+      unread: 'Непрочитанные',
+      idle: 'Бездействие',
+      filters: 'Фильтры',
+      resetToDefaults: 'Сбросить настройки',
+      noPR: 'Без PR'
+    },
     gatewayGroups: {
       grouping: 'Шлюз и профиль',
       rename: 'Переименовать группу',
@@ -3374,14 +3432,19 @@ export const ru = defineLocale({
     free: 'Free',
     freeTier: 'Бесплатный тариф',
     priceTitle: 'Цена вход / выход за миллион токенов',
-    wasPrice: 'было'
+    wasPrice: 'было',
+    customModel: 'Своя модель',
+    addCustomModelAction: 'Добавить свою модель…',
+    customModelPlaceholder: 'Введите id модели, например openai/gpt-5'
   },
 
   modelVisibility: {
     title: 'Модели',
     search: 'Поиск моделей',
     noAuthenticatedProviders: 'Нет провайдеров с аутентификацией.',
-    addProvider: 'Добавить провайдера…'
+    addProvider: 'Добавить провайдера…',
+    addCustomModel: 'Добавить свою модель',
+    removeCustomModel: 'Удалить свою модель'
   },
   shell: {
     windowControls: 'Управление окном',
