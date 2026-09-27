@@ -307,6 +307,7 @@ import type { InstallStamp } from './install-stamp'
 import { createIntroRevealWindowController } from './intro-reveal-window'
 import { applyLaunchProfileOverride } from './launch-profile'
 import { CURL_TITLE_WRITE_OUT, parseCurlTitleResponse } from './link-title-curl'
+import { canonicalTitleCacheKey, isFetchableHttpUrl } from './link-title-url'
 import { isAuthWall, resolveLinkTitle } from './link-title-wall'
 import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle } from './link-title-window'
 import { CHROMIUM_LOG_FILENAME, enableLinuxCrashDiagnostics, linuxCrashDiagnostics } from './linux-crash-diagnostics'
@@ -462,6 +463,7 @@ import {
   oauthLoginLoadUrlOptions,
   resolveRemoteRequestHeaders
 } from './remote-ws-headers'
+import { enableRendererAccessibility } from './renderer-accessibility'
 import { missingRendererAssets, presentRendererIndexes } from './renderer-bundle'
 import { planLaunchSwitches, readDesktopLaunchConfig } from './renderer-heap-flags'
 import { loadRendererLoadErrorPage } from './renderer-load-error-page'
@@ -951,7 +953,18 @@ const HERMES_HOME: string = resolveDesktopHermesHome({
     void 0 // first run: no config yet → Chromium defaults
   }
 
-  for (const planned of planLaunchSwitches(readDesktopLaunchConfig(desktopLaunchYaml), process.argv.slice(1))) {
+  const desktopLaunchConfig = readDesktopLaunchConfig(desktopLaunchYaml)
+
+  // `desktop.renderer_accessibility: false` must reach packaged launches too,
+  // not only the `hermes desktop` launcher's env bridge (#118271).
+  if (
+    desktopLaunchConfig.rendererAccessibility === false &&
+    process.env.HERMES_DESKTOP_RENDERER_ACCESSIBILITY === undefined
+  ) {
+    process.env.HERMES_DESKTOP_RENDERER_ACCESSIBILITY = '0'
+  }
+
+  for (const planned of planLaunchSwitches(desktopLaunchConfig, process.argv.slice(1))) {
     if (planned.value === undefined) {
       app.commandLine.appendSwitch(planned.name)
     } else {
@@ -3726,9 +3739,7 @@ function killHermesOwnedVenvDaemons(updateRoot) {
   let holders = []
 
   try {
-    holders = scanWindowsProcesses().filter(p =>
-      isHermesOwnedVenvDaemon(p?.ExecutablePath, p?.CommandLine, scriptsDir)
-    )
+    holders = scanWindowsProcesses().filter(p => isHermesOwnedVenvDaemon(p?.ExecutablePath, p?.CommandLine, scriptsDir))
   } catch {
     // Best-effort: the uninstall lock probe remains the backstop.
     return
@@ -3772,9 +3783,7 @@ function killExternalVenvHolders(updateRoot) {
   let holders = []
 
   try {
-    holders = scanWindowsProcesses().filter(p =>
-      isExternalVenvHolder(p?.ExecutablePath, p?.CommandLine, scriptsDir)
-    )
+    holders = scanWindowsProcesses().filter(p => isExternalVenvHolder(p?.ExecutablePath, p?.CommandLine, scriptsDir))
   } catch {
     // Best-effort: the shim-lock probe remains the backstop.
     return
@@ -3784,7 +3793,9 @@ function killExternalVenvHolders(updateRoot) {
     const pid = Number(holder?.ProcessId)
 
     if (Number.isInteger(pid) && pid > 0) {
-      rememberLog(`[updates] stopping external Hermes venv holder (autostart gateway/dashboard) PID ${pid} before hand-off`)
+      rememberLog(
+        `[updates] stopping external Hermes venv holder (autostart gateway/dashboard) PID ${pid} before hand-off`
+      )
 
       try {
         forceKillProcessTree(pid)
@@ -5467,24 +5478,6 @@ let oauthSession = null
 let renderTitleInFlight = 0
 const renderTitleQueue = []
 
-function canonicalTitleCacheKey(rawUrl) {
-  const value = String(rawUrl || '').trim()
-
-  if (!value) {
-    return ''
-  }
-
-  try {
-    const url = new URL(value)
-    const host = url.hostname.replace(/^www\./i, '').toLowerCase()
-    const pathname = url.pathname === '/' ? '/' : url.pathname.replace(/\/+$/, '') || '/'
-
-    return `${host}${pathname}${url.search || ''}`
-  } catch {
-    return value
-  }
-}
-
 function cacheTitle(key, title) {
   if (titleCache.size >= TITLE_CACHE_LIMIT) {
     titleCache.delete(titleCache.keys().next().value)
@@ -5701,6 +5694,18 @@ function fetchHtmlTitleWithRenderer(rawUrl: string): Promise<string> {
 // electron/link-title-wall.ts; main.ts only supplies the two tiers' I/O.
 function fetchLinkTitle(rawUrl) {
   const url = String(rawUrl || '').trim()
+
+  // Scheme gate (#93893): only absolute http(s) URLs enter the title
+  // pipeline. Anything else — leaked `@url:` markup, placeholders, garbage —
+  // must never reach curl or the hidden title window's loadURL(), where it
+  // surfaces as a repeating `Failed to load URL: … ERR_NAME_NOT_RESOLVED`
+  // loop. canonicalTitleCacheKey's '' return is the second layer of the same
+  // guard; this check keeps non-URLs out even when a parseable-but-wrong
+  // scheme (file:, mailto:) would still build a cache key.
+  if (!isFetchableHttpUrl(url)) {
+    return Promise.resolve('')
+  }
+
   const key = canonicalTitleCacheKey(url)
 
   if (!key) {
@@ -18737,6 +18742,15 @@ app.whenReady().then(() => {
   // Settings → Gateway. Must run before createWindow() and the first
   // connection resolution.
   migrateLegacyEncryptedSecretsOnce()
+
+  // Expose the renderer's accessibility tree to the OS (#118271, Windows
+  // twin #92607): dictation tools that insert text through the accessibility
+  // APIs don't register as screen readers, so Chromium never builds the tree
+  // and the composer stays invisible to them. Must run after `ready` (the
+  // API's requirement). Opt out with desktop.renderer_accessibility: false
+  // (bridged as HERMES_DESKTOP_RENDERER_ACCESSIBILITY=0); the platform/env
+  // decision lives in the extracted helper.
+  enableRendererAccessibility({ appApi: app })
 
   installMediaPermissions()
   installDownloadHandling()
