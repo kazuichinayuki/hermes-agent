@@ -3,7 +3,7 @@
 import asyncio
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import sys
@@ -50,8 +50,8 @@ def _ensure_discord_mock():
 
 _ensure_discord_mock()
 
-import plugins.platforms.discord.adapter as discord_platform  # noqa: E402
-from plugins.platforms.discord.adapter import DiscordAdapter  # noqa: E402
+import plugins.platforms.discord.adapter as discord_platform
+from plugins.platforms.discord.adapter import DiscordAdapter
 
 
 class FakeDMChannel:
@@ -139,7 +139,7 @@ def make_message(*, channel, content: str, mentions=None, msg_type=None):
         mentions=list(mentions or []),
         attachments=[],
         reference=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         channel=channel,
         author=author,
         type=msg_type if msg_type is not None else discord_platform.discord.MessageType.default,
@@ -347,21 +347,21 @@ async def test_discord_voice_linked_channel_skips_mention_requirement_and_auto_t
 
 
 @pytest.mark.asyncio
-async def test_discord_free_response_channel_auto_threads(adapter, monkeypatch):
-    """Free-response channels auto-thread like any other channel.
+async def test_discord_free_response_channel_skips_auto_thread(adapter, monkeypatch):
+    """Free-response channels should reply inline, never spawn a new thread.
 
-    Decoupled in the adapter: ``free_response_channels`` controls the
-    @mention gate only; ``no_thread_channels`` is the sole mechanism
-    for excluding channels from auto-threading.  Users who want a
-    free-response channel without threads must add it to
-    ``no_thread_channels`` explicitly.
+    Without this, every message in a free-response channel would auto-create
+    a fresh thread (since the channel bypasses the @mention gate, every
+    message looks like a fresh trigger).  That turns a "lightweight chat"
+    channel into a thread-spawning machine — see the docs at
+    website/docs/user-guide/messaging/discord.md which already describe
+    this as the intended behavior.
     """
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
     monkeypatch.setenv("DISCORD_FREE_RESPONSE_CHANNELS", "789")
     monkeypatch.delenv("DISCORD_AUTO_THREAD", raising=False)  # default true
 
-    fake_thread = FakeThread(channel_id=999, name="auto-thread")
-    adapter._auto_create_thread = AsyncMock(return_value=fake_thread)
+    adapter._auto_create_thread = AsyncMock()
 
     message = make_message(
         channel=FakeTextChannel(channel_id=789),
@@ -370,11 +370,11 @@ async def test_discord_free_response_channel_auto_threads(adapter, monkeypatch):
 
     await adapter._handle_message(message)
 
-    adapter._auto_create_thread.assert_awaited_once()
+    adapter._auto_create_thread.assert_not_awaited()
     adapter.handle_message.assert_awaited_once()
     event = adapter.handle_message.await_args.args[0]
     assert event.text == "casual chat in free-response channel"
-    assert event.source.chat_type == "thread"
+    assert event.source.chat_type == "group"
 
 
 @pytest.mark.asyncio
@@ -943,7 +943,6 @@ async def test_discord_dm_does_not_backfill(adapter, monkeypatch):
     adapter.config.extra["history_backfill"] = True
     adapter._fetch_channel_context = AsyncMock(return_value="[Recent channel messages]\n[Alice] context")
 
-    bot_user = adapter._client.user
     dm_channel = SimpleNamespace(
         id=999,
         name=None,

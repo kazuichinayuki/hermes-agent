@@ -1,6 +1,0 @@
-name: decohere
-version: 1.0.0
-description: >-
-  Ledger entry posting — structured semantic extraction
-  replacing raw message injection. Prevents false causal binding
-  by removing phrase-level co-occurrence from context windows.

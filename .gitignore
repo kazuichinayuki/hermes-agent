@@ -28,8 +28,8 @@ act/
 .notebooklm-playwright/
 .pip-cache/
 .uv-cache/
-/export*
-!plugins/context_engine/decohere/cli/export_cmd.py
+compose.hermes.local.yml
+export*
 __pycache__/model_tools.cpython-310.pyc
 __pycache__/web_tools.cpython-310.pyc
 logs/
@@ -47,6 +47,9 @@ tmp/
 temp_vision_images/
 hermes-*/*
 examples/
+# Skills ship worked examples as support files; the bare pattern above is for dataset dumps.
+!optional-skills/**/examples/
+!skills/**/examples/
 tests/quick_test_dataset.jsonl
 tests/sample_dataset.jsonl
 run_datagen_kimik2-thinking.sh
